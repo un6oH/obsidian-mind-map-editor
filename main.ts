@@ -1,23 +1,12 @@
-import { Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import { create } from 'domain';
-import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelection, MarkdownPostProcessorContext, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
-import { decorationSetField } from 'state-fields/decoration-set-field';
+import { Text } from '@codemirror/state';
+import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelection, MarkdownFileInfo, MarkdownPostProcessorContext, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State, StateType } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 // Remember to rename these classes and interfaces!
 
-const mindMapTemplate = `\`\`\`mindmap
-# Untitled Mind Map
-<map>false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621;</map>
-- note
-\`\`\``;
+const NOTE_ID_MAX_LENGTH = 12;
 
-const ALL_EMOJIS: Record<string, string> = {
-  ':+1:': '👍',
-  ':sunglasses:': '😎',
-  ':smile:': '😄',
-};
 interface Map {
   title: string, 
   studySettings: FSRSParameters, 
@@ -42,6 +31,7 @@ interface Note {
 	content: string, // full content in markdown
 	props: NoteProperties, 
 }
+
 function createNote(study = false): Note {
 	return {
 		content: "", 
@@ -69,9 +59,6 @@ export default class MyPlugin extends Plugin {
 
 		this.registerEditorExtension([createMindMapEditorViewPlugin(this)]);
 
-		// mind map code block processor
-		this.registerMarkdownCodeBlockProcessor('mindmap', mindMapCodeBlockProcessor);
-
 		// This creates an icon in the left ribbon.
 		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
@@ -89,9 +76,9 @@ export default class MyPlugin extends Plugin {
 			id: 'mindmapeditor-create-mindmap-template', 
 			name: 'Create new mind map', 
 			editorCallback: (editor: Editor) => {
-				const cursor = editor.getCursor();
-				editor.replaceRange(mindMapTemplate, cursor);
-				editor.setCursor(cursor.line + 1, cursor.ch);
+				new MindMapCreatorModal(this.app, editor.getSelection(), (text) => {
+					editor.replaceSelection(text);
+				}).open();
 			}
 		});
 
@@ -115,7 +102,9 @@ export default class MyPlugin extends Plugin {
 			id: 'mindmapeditor-update-notes', 
 			name: 'Update notes', 
 			hotkeys: [{ modifiers: ['Ctrl', 'Shift'], key: 'u' }],
-			editorCallback: updateNotes
+			editorCallback: (editor: Editor) => {
+				updateNotes(editor);
+			}
 		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
@@ -171,19 +160,14 @@ function orderSelection(selection: EditorSelection): {start: EditorPosition, end
 // new note
 // changed path
 // changed studyable status
-function updateNotes(editor: Editor, view: MarkdownView) {
-	// check if cursor is within a mind map
+function updateNotes(editor: Editor) {
 	const doc = editor.getDoc();
-	let range = mindMapRange(doc);
-	if (!range) {
-		new Notice("Select a Mind Map to update");
-		return;
-	}
+	const start = 0;
+	const end = doc.lineCount();
+	
+	new Notice("Updated mind map");
+	
 	// generate data to send to syntax tree processor
-	const { start, end } = range;
-
-	new Notice("Mind map found in lines " + (start + 1) + " to " + (end + 1));
-
 	const notes: string[] = [];
 	const lines: number[] = [];
 	const levels: number[] = [];
@@ -200,21 +184,32 @@ function updateNotes(editor: Editor, view: MarkdownView) {
 	}
 	// console.log(levels);
 
-	// update
-	const mindMapTopic = doc.getLine(start + 1).substring(1);
-	const tree = noteTree(notes, levels, [toNoteID(mindMapTopic, true)]);
-	// console.log(tree);
+	// find title
+	let mindMapTitle = "untitled";
+	const titleRegex = /# (.*)/g;
+	for (let line = 0; line < end; line++) {
+		let match = titleRegex.exec(doc.getLine(line))
+		if (match) {
+			console.log("title match:", match);
+			mindMapTitle = match[1];
+			break;
+		}
+	}
 
+	// recursively iterates through list to generate a list of paths
+	const tree = noteTree(notes, levels, [toNoteID(mindMapTitle, true)]);
+
+	// update the props tag for each note
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
 		const path = tree[i];
 		const text = doc.getLine(line);
-		const propertyString = noteTagRegex.test(text);
+		const propsText = noteTagRegex.exec(text);
 		// console.log("contains property string:", propertyString);
 		
 		const study = studyable(notes[i]);
 
-		if (propertyString) { // only replace path string in existing tag
+		if (propsText) { // only replace path string in existing tag
 			const note = parseNote(text);
 			// console.log("note:", note);
 			if (!note) continue;
@@ -283,42 +278,9 @@ export function mindMapRange(doc: Editor): {start: number, end: number} | null {
 	return {start, end};
 }
 
-async function mindMapCodeBlockProcessor(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) {
-	const rows = source.split('\n').filter((row) => row.length > 0);
-	const map: Map = {
-		title: "", 
-		studySettings: generatorParameters(), 
-	};
-	
-	// find map title
-	for (let row of rows) {
-		const text = row.trim();
-		if (text[0] === "#") {
-			map.title = text.substring(1, text.length).trim();
-			// console.log("title found:", mapData.title);
-			break;
-		}
-	}
-
-	// find map parameters
-	for (let row of rows) {
-		const text = row.trim();
-		const match = mapTagRegex.exec(text);
-		if (match) {
-			// map.studySettings = parseStudyParameters(match[1]);
-			break;
-		}
-	}
-
-	// find map nodes
-	for (let row of rows) {
-		
-	}
-
-	el.createEl('div', { text: "Mind map: " + map.title });
-}
-
+// parses <map></map> tag
 function parseStudyParameters(string: string): FSRSParameters {
+	const contents = string.slice(5, -6);
 	const parameters = string.trim().split(';');
 	const props: Partial<FSRSParameters> = {
 		enable_fuzz: parameters[0] !== "" ? parameters[0] === "true" : undefined, 
@@ -377,7 +339,7 @@ function parseCard(props: string[]): Card {
     scheduled_days: parseFloat(props[4]),
     reps: parseFloat(props[5]),
     lapses: parseFloat(props[6]),
-    state: State[props[7] as StateType],
+    state: parseFloat(props[7]),
     last_review: props[8] ? new Date(props[8]) : undefined,
 	}
 }
@@ -394,14 +356,19 @@ function toNoteID(str: string, title: boolean = false): string {
 	if (title) {
 		return lowercase;
 	}
-	return lowercase.substring(0, 12);
+	return lowercase.substring(0, NOTE_ID_MAX_LENGTH);
 }
 
-function toPathString(path: string[]) {
+function toPathString(path: string[]): string {
 	return path.join('\\');
 }
 
-function createMapTag(params: FSRSParameters): string {
+function formatPath(path: string[]): string {
+	return path.join(' > ');
+}
+
+// creates full tag
+function createMapTag(params: FSRSParameters, includeTags = true): string {
 	let string = "";
 	const propStrings = [
 		params.enable_fuzz.toString(), 
@@ -411,6 +378,9 @@ function createMapTag(params: FSRSParameters): string {
 		params.w.join(','), 
 	]
 	propStrings.forEach(str => string += str + ';');
+
+	if (includeTags)
+		string = "<map>" + string + "</map>";
 
 	return string;
 }
@@ -424,6 +394,8 @@ function createNoteTag(props: NoteProperties, includeTags = true): string {
 	]
 	propStrings.forEach(str => string += str + ';');
 
+	if (props.study && !props.card) 
+		props.card = createEmptyCard();
 	if (props.card) {
 		const cardPropStrings = [
 			props.card.due.toISOString(), 
@@ -433,7 +405,7 @@ function createNoteTag(props: NoteProperties, includeTags = true): string {
 			props.card.scheduled_days.toString(),
 			props.card.reps.toString(),
 			props.card.lapses.toString(),
-			State[props.card.state], 
+			props.card.state.toString(), 
 			props.card.last_review ? props.card.last_review.toISOString() : ""
 		];
 		cardPropStrings.forEach(str => string += str + ';');
@@ -478,17 +450,95 @@ function parseNumberArray(array: string): number[] {
 	return splitString.map((str) => parseFloat(str));
 }
 
+class MindMapCreatorModal extends Modal {
+	view: EditorView;
+
+	constructor(app: App, title: string, editorCallback: (text: string) => void) {
+		super(app);
+
+		this.setTitle("Create a mind map");
+		const map: Map = {
+			title: title ? title : "My mind map",
+			studySettings: generatorParameters()
+		}
+		new Setting(this.contentEl)
+			.setName("Title")
+			.addText((text) => text
+				.setPlaceholder(map.title)
+				.onChange((value) => {
+					map.title = value;
+				}));
+
+		new Setting(this.contentEl)
+			.setName("Desired retention")
+			.addText((text) => text
+				.setPlaceholder(map.studySettings.request_retention.toString())
+				.onChange((value) => {
+					let v = parseFloat(value);
+					if (v) map.studySettings.request_retention = v;
+				}));
+		
+		new Setting(this.contentEl)
+			.setName("Maximum interval")
+			.addText((text) => text
+				.setPlaceholder(map.studySettings.maximum_interval.toString())
+				.onChange((value) => {
+					let v = parseFloat(value);
+					if (v) map.studySettings.maximum_interval = v;
+				}));
+
+		new Setting(this.contentEl)
+			.setName("Parameters")
+			.addText((text) => text
+				.setPlaceholder(map.studySettings.w.toString())
+				.onChange((value) => {
+					let v = parseNumberArray(value);
+					if (v) map.studySettings.w = v;
+				}));
+
+		new Setting(this.contentEl)
+			.setName("Enable fuzz")
+			.addText((text) => text
+				.setPlaceholder(map.studySettings.enable_fuzz.toString())
+				.onChange((value) => {
+					let v = value === "true";
+					if (v) map.studySettings.enable_fuzz = v;
+				}));
+		
+		new Setting(this.contentEl)
+			.setName("Enable short term")
+			.addText((text) => text
+				.setPlaceholder(map.studySettings.enable_short_term.toString())
+				.onChange((value) => {
+					let v = value === "true";
+					if (v) map.studySettings.enable_short_term = v;
+				}));
+
+		new Setting(this.contentEl)
+			.addButton((btn) => btn
+				.setButtonText("Create")
+				.setCta()
+				.onClick(() => {
+					this.close();
+					editorCallback("# " + map.title + "\n" + createMapTag(map.studySettings, true));
+				})
+			)
+	}
+}
+
 export class MapStudySettingsEditorModal extends Modal {
 	view: EditorView;
 
+	// start and end of tag
 	constructor(plugin: Plugin, view: EditorView, start: number, end: number) {
+		// console.log("Created map study settings editor modal", "start:", start, "end:", end);
 		super(plugin.app);
 		this.view = view;
 		
 		// parse data string
 		this.setTitle("Map study settings");
-		const content = view.state.doc.sliceString(start, end);
-		const params = parseStudyParameters(content);
+		const tag = view.state.doc.sliceString(start, end);
+		const params = parseStudyParameters(tag);
 		new Setting(this.contentEl)
       .setName('Enable fuzz')
       .addText((text) =>
@@ -526,141 +576,216 @@ export class MapStudySettingsEditorModal extends Modal {
 	}
 
 	updateData(params: FSRSParameters, from: number, to: number) {
+		const tag = createMapTag(params, true);
+		// console.log(tag);
 		const transaction = this.view.state.update({
 			changes: {
 				from: from, 
 				to: to, 
-				insert: createMapTag(params), 
+				insert: tag, 
 			}
 		});
 		this.view.dispatch(transaction);
 	}
 }
 
+// Called from note widget. Specifies start and end indices of text within widget
 export class NotePropertyEditorModal extends Modal {
 	view: EditorView;
+	indices: number[][];
+	note: Note;
 
-	constructor(plugin: Plugin, view: EditorView, start: number, end: number) {
+	constructor(plugin: Plugin, view: EditorView, indices: number[][]) {
 		super(plugin.app);
 		this.view = view;
-		
-		// parse data string
-		this.setTitle("Note properties");
-		const propsText = view.state.doc.sliceString(start, end);
-		const props = parseNoteTag(propsText);
+		this.indices = indices;
 
+		let note = parseNote(view.state.doc.sliceString(indices[0][0], indices[0][1]));
+		if (!note) {
+			new Notice("No note found");
+			this.close();
+			return;
+		}
+		this.note = note!;
+		
+		this.setTitle(this.note.content);
+
+		// settings
+		new Setting(this.contentEl)
+			.setName("Text:")
+			.addText((text) => 
+				text.setValue(this.note.content).onChange((value) => {
+					this.note.content = value;
+					this.note.props.path[this.note.props.path.length - 1] = toNoteID(value);
+				}))
+			.setDesc("Warning: changing the notes contents may disconnect linked notes");
+
+		// displays path
 		new Setting(this.contentEl)
       .setName('Path')
-      .addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-          props.path = parsePath(value);
-        }));
+      .setDesc(formatPath(this.note.props.path));
+
+		// opens a suggest modal to select notes
+		const idDescription = document.createDocumentFragment();
+		const idDescriptionSpan = document.createElement('span');
+		idDescriptionSpan.textContent = this.note.props.id ? this.note.props.id.replace(/\\/g, ' > ') : "not linked";
+		idDescription.appendChild(idDescriptionSpan);
 		new Setting(this.contentEl)
-			.setName('id')
-			.addText((text) =>
-				text.setPlaceholder(props.id ? props.id : 'not linked').onChange((value) => {
-					props.id = value;
-				}));
+			.setName("ID")
+			.addButton((button) => button
+				.setButtonText("Find a note")
+				.setCta()
+				.onClick(() => {
+					new IdSuggestModal(plugin.app, view, this.note.content, (id: string) => {
+						this.note.props.id = id;
+						idDescriptionSpan.textContent = id.replace(/\\/g, ' > ');
+						// console.log("id linked to", id);
+					}).open();
+				}))
+			.addButton((button) => button
+				.setButtonText("Unlink")
+				.setCta()
+				.onClick(() => {
+					this.note.props.id = null;
+					idDescriptionSpan.textContent = "not linked";
+					// console.log("id unlinked");
+				}))
+			.setDesc(idDescription);
+		
+		// toggle to select studyable
 		new Setting(this.contentEl)
 			.setName('Studyable')
-			.addText((text) =>
-				text.setPlaceholder(props.study.toString()).onChange((value) => {
-					props.study = (value === 'true' || value === 'false') ? value === 'true' : props.study;
-				}));
+			.addToggle((toggle) => toggle
+				.setValue(this.note.props.study)
+				.onChange((value) => this.note.props.study = value));
 
 		// card params
-		if (!props.card) {
+		const card = this.note.props.card!;
+		if (this.note.props.card != null) {
 			new Setting(this.contentEl)
-			.addButton((btn) => {
-				btn
-					.setButtonText('OK')
-					.setCta()
-					.onClick(() => {
-						this.close();
-						this.updateData(props, start, end);
-					})
-			});
-			return;
-		};
+				.setName('Card due date (can edit)')
+				.addText((text) =>
+					text.setValue(card.due.toString()).onChange((value) => {
+						let newDate = new Date(value);
+						card.due = newDate.valueOf() ? newDate : card.due;
+					}));
+			new Setting(this.contentEl)
+				.setName('Card stability')
+				.addText((text) =>
+					text.setPlaceholder(card.stability.toString()).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card difficulty')
+				.addText((text) =>
+					text.setPlaceholder(card.difficulty.toString()).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card elapsed days')
+				.addText((text) =>
+					text.setPlaceholder(card.elapsed_days.toString()).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card scheduled days')
+				.addText((text) =>
+					text.setPlaceholder(card.scheduled_days.toString()).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card reps')
+				.addText((text) =>
+					text.setPlaceholder(card.reps.toString()).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card lapses')
+				.addText((text) =>
+					text.setPlaceholder(card.lapses.toString()).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card state')
+				.addText((text) =>
+					text.setPlaceholder(State[card.state]).setDisabled(true));
+			new Setting(this.contentEl)
+				.setName('Card last review')
+				.addText((text) =>
+					text.setPlaceholder(card.last_review ? card.last_review.toString() : "not reviewed yet").setDisabled(true));
+		}
+		
 		new Setting(this.contentEl)
-			.setName('Card due date')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.card.due = Date.parse(value);
-				}));
-		new Setting(this.contentEl)
-			.setName('Card stability')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}).setDisabled(true));
-		new Setting(this.contentEl)
-			.setName('Card difficulty')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}).setDisabled(true));
-		new Setting(this.contentEl)
-			.setName('Card elapsed days')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}));
-		new Setting(this.contentEl)
-			.setName('Card scheduled days')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}));
-		new Setting(this.contentEl)
-			.setName('Card reps')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}));
-		new Setting(this.contentEl)
-			.setName('Card lapses')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}));
-		new Setting(this.contentEl)
-			.setName('Card state')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}));
-		new Setting(this.contentEl)
-			.setName('Card last review data')
-			.addText((text) =>
-				text.setPlaceholder(toPathString(props.path)).onChange((value) => {
-					props.path = parsePath(value);
-				}));
+		.addButton((btn) => {
+			btn
+				.setButtonText('OK')
+				.setCta()
+				.onClick(() => {
+					this.note.props.card = card;
+					this.close();
+					this.updateData(indices);
+				})
+		});
+		return;
 	}
 
-	updateData(props: NoteProperties, from: number, to: number) {
-		const transaction = this.view.state.update({
+	updateData(indices: number[][]) {
+		const contentEdit = this.view.state.update({
 			changes: {
-				from: from, 
-				to: to, 
-				insert: createNoteTag(props, false), 
+				from: indices[1][0], 
+				to: indices[1][1], 
+				insert: this.note.content + " ", 
 			}
 		});
-		this.view.dispatch(transaction);
+
+		const propsEdit = this.view.state.update({
+			changes: {
+				from: indices[2][0], 
+				to: indices[2][1], 
+				insert: createNoteTag(this.note.props, false), 
+			}
+		});
+		this.view.dispatch(contentEdit, propsEdit);
+	}
+
+	setID(id: string) {
+		// console.log(this.note.props.id);
+		console.log(id);
+		// this.note.props.id = id;
 	}
 }
 
-class IdSuggestModal extends SuggestModal<string[]> {
-	getSuggestions(query: string): string[][] | Promise<string[][]> {
-		
+interface ID {
+	content: string, 
+	path: string[]
+};
+class IdSuggestModal extends SuggestModal<ID> {
+	setIDCallback: (id: string) => void;
+	text: string;
+	notes: ID[];
+	defaultQuery: string;
+
+	constructor(app: App, view: EditorView, defaultQuery: string, setIDCallback: (id: string) => void) {
+		super(app)
+		this.setIDCallback = setIDCallback;
+		this.text = view.state.doc.toString();
+		this.notes = [];
+		this.defaultQuery = defaultQuery;
+
+		let noteMatch;
+		// split match into 
+		const noteRegex = RegExp(notePattern, 'gm');
+		while ((noteMatch = noteRegex.exec(this.text)) !== null) {
+			// console.log(noteMatch);
+			const content = noteMatch[1].trim();
+			const propStrings = noteMatch[2].split(';');
+			const path = parsePath(propStrings[0]);
+			this.notes.push({ content, path });
+		}
 	}
 
-	renderSuggestion(value: string[], el: HTMLElement): void {
-		
+	getSuggestions(query: string): ID[] | Promise<ID[]> {
+		let q = query ? query : this.defaultQuery;
+		q = q.toLowerCase();
+		return this.notes.filter((note) => note.content.toLowerCase().includes(q));
 	}
 
-	onChooseSuggestion(item: string[], evt: MouseEvent | KeyboardEvent): void {
-		
+	renderSuggestion(note: ID, el: HTMLElement): void {
+		el.createEl('div', { text: note.content });
+		el.createEl('small', { text: formatPath(note.path) });
+	}
+
+	onChooseSuggestion(note: ID, evt: MouseEvent | KeyboardEvent): void {
+		this.setIDCallback(toPathString(note.path));
+		this.close();
 	}
 }
 
@@ -690,9 +815,10 @@ class SampleSettingTab extends PluginSettingTab {
 	}
 }
 
+export const notePattern = "- (?<content>.*?)<note>(?<props>.*?)<\/note>";
+
 export const noteTagPattern = "<note>(.*?)<\/note>";
 const noteTagRegex = RegExp(noteTagPattern, 'm');
-// export const noteDataRegex = /<note>([\s\S]*?)<\/note>/gm;
-// export const mapStudyParametersRegex = /<map>.*?<\/map>/gm;
+
 export const mapTagPattern = "<map>(.*?)<\/map>";
 const mapTagRegex = RegExp(mapTagPattern, 'm');
