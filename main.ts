@@ -1,8 +1,9 @@
 import { EditorView } from '@codemirror/view';
 import { Text } from '@codemirror/state';
-import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelection, MarkdownFileInfo, MarkdownPostProcessorContext, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal } from 'obsidian';
+import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelection, MarkdownFileInfo, MarkdownPostProcessorContext, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal, WorkspaceLeaf } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State, StateType } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
+import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 // Remember to rename these classes and interfaces!
 
 const NOTE_ID_MAX_LENGTH = 12;
@@ -52,6 +53,8 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
+	mindMapView: MindMapView;
+
 	async onload() {
 		console.log("plugin loaded.");
 
@@ -59,10 +62,15 @@ export default class MyPlugin extends Plugin {
 
 		this.registerEditorExtension([createMindMapEditorViewPlugin(this)]);
 
+		this.registerView(
+			VIEW_TYPE_MIND_MAP, 
+			(leaf) => new MindMapView(leaf)
+		);
+
 		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
+		const ribbonIconEl = this.addRibbonIcon('book-open-check', 'Study mind map', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+			this.activateView();
 		});
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
@@ -130,6 +138,30 @@ export default class MyPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	async activateView() {
+		const { workspace } = this.app;
+
+		let leaf: WorkspaceLeaf | null = null;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_MIND_MAP);
+
+    if (leaves.length > 0) {
+      // A leaf with our view already exists, use that
+      leaf = leaves[0];
+    } else {
+      // Our view could not be found in the workspace, create a new leaf
+      // in the right sidebar for it
+      // leaf = workspace.getLeftLeaf(false);
+      // leaf = workspace.getRightLeaf(false);
+			leaf = workspace.getLeaf('window');
+      await leaf.setViewState({ type: VIEW_TYPE_MIND_MAP, active: true });
+    }
+
+    // "Reveal" the leaf in case it is in a collapsed sidebar
+    workspace.revealLeaf(leaf);
+
+		this.mindMapView = leaf.view as MindMapView;
 	}
 }
 
