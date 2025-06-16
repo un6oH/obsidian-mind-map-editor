@@ -9,8 +9,9 @@ import {
   PluginSpec,
 } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
-import { MapStudySettingsEditorModal, NotePropertyEditorModal, notePattern, noteTagPattern, mapTagPattern } from 'main';
+import { MapStudySettingsEditorModal, NotePropertyEditorModal } from 'main';
 import { EditorRange, Plugin } from 'obsidian';
+import { notePattern, noteTagPattern, mapTagPattern } from 'helpers';
 
 class MapStudyParametersWidget extends WidgetType {
   plugin: Plugin;
@@ -47,20 +48,25 @@ class NoteDataWidget extends WidgetType {
   plugin: Plugin;
   view: EditorView;
   indices: number[][];
+  isKeyWord: boolean;
+  isStudyable: boolean;
 
-  constructor(plugin: Plugin, view: EditorView, indices: number[][]) {
+  constructor(plugin: Plugin, view: EditorView, indices: number[][], isKeyWord: boolean, isStudyable: boolean) {
     super();
     this.plugin = plugin;
     this.view = view;
     this.indices = indices;
+    this.isKeyWord = isKeyWord;
+    this.isStudyable = isStudyable;
   }
 
   toDOM() {
     const button = document.createElement('a');
-    button.textContent = 'inspect note';
-    button.className = "widget-note-data";
+    button.textContent = this.isKeyWord ? "key word" : "relation";
+    // button.addClass('widget-note-data');
+    button.addClass(this.isKeyWord ? 'widget-note-keyword' : 'widget-note-relation');
+    button.addClass(this.isStudyable ? 'widget-note-study' : 'widget-note-nostudy');
     button.onclick = () => {
-      // console.log("inspect note");
       new NotePropertyEditorModal(this.plugin, this.view, this.indices).open();
     };
     return button;
@@ -103,12 +109,18 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
           while ((noteMatch = noteRegex.exec(text)) !== null) {
             // console.log(noteMatch);
             const indices: number[][] = (noteMatch as any).indices;
+            const content = noteMatch[1].trim();
+            let isKeyWord = true;
+            if (content.endsWith(':')) isKeyWord = false; 
+            const props = noteMatch[2];
+            let isStudyable = true;
+            if (props.contains('false')) isStudyable = false;
 
             // widget replaces <{note>...<\/note}>
             const start = from + indices[2][0] - 5; 
             const end = from + indices[2][1] + 6;
             const deco = Decoration.replace({
-              widget: new NoteDataWidget(plugin, view, indices),
+              widget: new NoteDataWidget(plugin, view, indices, isKeyWord, isStudyable),
               inclusive: false
             });
             decorations.push({start, end, deco});

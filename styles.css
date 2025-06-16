@@ -10,3 +10,20 @@ If your plugin does not need CSS, delete this file.
 .widget-note-data {
   opacity: 50%;
 }
+
+.widget-note-keyword {
+  color: cyan;
+}
+
+.widget-note-relation {
+  color: orange;
+}
+
+.widget-note-study {
+  opacity: 75%;
+  /* font-weight: bold; */
+}
+
+.widget-note-nostudy {
+  opacity: 25%;
+}

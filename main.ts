@@ -4,41 +4,9 @@ import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelect
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State, StateType } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
+import { MapProperties, Note, NoteProperties, MindMap } from 'types';
+import { notePattern, noteTagPattern, noteTagRegex, mapTagPattern, mapTagRegex, parseCard, parseMindMap, parseNote, parseNoteTag, parseNumberArray, parsePath, parseStudyParameters, createNote, createNoteProperties, studyable, toNoteID, toPathString, formatPath } from 'helpers';
 // Remember to rename these classes and interfaces!
-
-const NOTE_ID_MAX_LENGTH = 12;
-
-interface Map {
-  title: string, 
-  studySettings: FSRSParameters, 
-}
-
-interface NoteProperties {
-	path: string[], // all parents
-	id: string | null, // id of node if linked to another branch. node defaults to path if null
-	study: boolean, // whether the node can be studied
-	card: Card | null, // null if the node is not studyable
-}
-function createNoteProperties(study: boolean): NoteProperties {
-	return {
-		path: [], 
-		id: null, 
-		study: study, 
-		card: study ? createEmptyCard(Date.now()) : null, 
-	}
-}
-
-interface Note {
-	content: string, // full content in markdown
-	props: NoteProperties, 
-}
-
-function createNote(study = false): Note {
-	return {
-		content: "", 
-		props: createNoteProperties(study), 
-	}
-}
 
 interface MyPluginSettings {
 	mySetting: string;
@@ -52,7 +20,6 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
-
 	mindMapView: MindMapView;
 
 	async onload() {
@@ -67,17 +34,53 @@ export default class MyPlugin extends Plugin {
 			(leaf) => new MindMapView(leaf)
 		);
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('book-open-check', 'Study mind map', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			this.activateView();
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		// const updateNotesRibbonIcon = this.addRibbonIcon('list-checks', "Update notes", () => {
+		// 	const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		// 	if (!activeView) {
+		// 		new Notice("No active editor");
+		// 		return;
+		// 	}
+		// 	new UpdateNotesModal(this.app, activeView.editor);
+		// });
+		// updateNotesRibbonIcon.addClass('my-plugin-ribbon-class');
+
+		// // This creates an icon in the left ribbon.
+		// const studyNotesRibbonIcon = this.addRibbonIcon('book-open-check', 'Study mind map', () => {
+		// 	// Called when the user clicks the icon.
+		// 	this.activateView();
+		// });
+		// // Perform additional things with the ribbon
+		// studyNotesRibbonIcon.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		const updateNotesStatusBarItem = this.addStatusBarItem();
+		updateNotesStatusBarItem.addClass('mod-clickable');
+		updateNotesStatusBarItem.textContent = "Update notes";
+		updateNotesStatusBarItem.onclick = () => {
+			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+			console.log("Notes updated");
+			new UpdateNotesModal(this.app, activeView!.editor).open();
+		};
+		
+		const studyMindMapStatusBarItem = this.addStatusBarItem();
+		studyMindMapStatusBarItem.addClass('mod-clickable');
+		studyMindMapStatusBarItem.textContent = "Study notes";
+		studyMindMapStatusBarItem.onclick = (ev) => {
+			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+			new StudyNotesModal(this.app, activeView!.editor).open();
+		}
+
+		// shows 
+		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
+			const leaf = this.app.workspace.getActiveViewOfType(MarkdownView);
+			if (leaf && isMindMap(leaf.editor)) {
+				updateNotesStatusBarItem.show();
+				studyMindMapStatusBarItem.show();
+			} else {
+				updateNotesStatusBarItem.hide();
+				studyMindMapStatusBarItem.hide();
+			}
+		}))
 
 		// Add a command to create a mindmap template
 		this.addCommand({
@@ -111,7 +114,11 @@ export default class MyPlugin extends Plugin {
 			name: 'Update notes', 
 			hotkeys: [{ modifiers: ['Ctrl', 'Shift'], key: 'u' }],
 			editorCallback: (editor: Editor) => {
-				updateNotes(editor);
+				if (isMindMap(editor)) {
+					updateNotes(editor);
+				} else {
+					new Notice("This document is not a mind map!");
+				}
 			}
 		});
 
@@ -120,9 +127,9 @@ export default class MyPlugin extends Plugin {
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
-		// this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-		// 	console.log('click', evt);
-		// });
+		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+			// console.log('click', evt);
+		});
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
@@ -139,52 +146,38 @@ export default class MyPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
-
-	async activateView() {
-		const { workspace } = this.app;
-
-		let leaf: WorkspaceLeaf | null = null;
-    const leaves = workspace.getLeavesOfType(VIEW_TYPE_MIND_MAP);
-
-    if (leaves.length > 0) {
-      // A leaf with our view already exists, use that
-      leaf = leaves[0];
-    } else {
-      // Our view could not be found in the workspace, create a new leaf
-      // in the right sidebar for it
-      // leaf = workspace.getLeftLeaf(false);
-      // leaf = workspace.getRightLeaf(false);
-			leaf = workspace.getLeaf('window');
-      await leaf.setViewState({ type: VIEW_TYPE_MIND_MAP, active: true });
-    }
-
-    // "Reveal" the leaf in case it is in a collapsed sidebar
-    workspace.revealLeaf(leaf);
-
-		this.mindMapView = leaf.view as MindMapView;
-	}
 }
 
-function addMindMapTag(editor: Editor) {
-	const tag = "<map>false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621</map>";
-	const cursor = editor.getCursor();
-	const from = {
-		line: cursor.line, 
-		ch: editor.getLine(cursor.line).length
-	} 
-	editor.replaceRange("\n" + tag, from);
-}
-
-function orderSelection(selection: EditorSelection): {start: EditorPosition, end: EditorPosition} {
-	const anchor = selection.anchor;
-	const head = selection.head;
-	let reverse = false;
-	if (anchor.line > head.line) {
-		reverse = true;
-	} else if (anchor.line == head.line) {
-		reverse = anchor.ch > head.ch;
+async function studyNotes(app: App, editor: Editor) {
+	const lineCount = editor.lineCount();
+	const from = { line: 0, ch: 0 };
+	const to = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length };
+	const mindMap = parseMindMap(editor.getRange(from, to));
+	
+	if (!mindMap) {
+		new Notice("Mind map not found");
+		return;
 	}
-	return reverse ? {start: head, end: anchor} : {start: anchor, end: head};
+
+	const { workspace } = app;
+
+	let leaf: WorkspaceLeaf | null = null;
+	const leaves = workspace.getLeavesOfType(VIEW_TYPE_MIND_MAP);
+
+	if (leaves.length > 0) {
+		// A leaf with our view already exists, use that
+		leaf = leaves[0];
+	} else {
+		// Our view could not be found in the workspace, create a new leaf
+		leaf = workspace.getLeaf('window');
+		await leaf.setViewState({ type: VIEW_TYPE_MIND_MAP, active: true });
+	}
+
+	// "Reveal" the leaf in case it is in a collapsed sidebar
+	workspace.revealLeaf(leaf);
+
+	this.mindMapView = leaf.view as MindMapView;
+	this.mindMapView.createMindMap(mindMap);
 }
 
 // editorCallback for update notes command
@@ -286,118 +279,7 @@ function updateNotes(editor: Editor) {
 	}
 }
 
-export function mindMapRange(doc: Editor): {start: number, end: number} | null {
-	const cursor = doc.getCursor().line;
-	let start = cursor;
-	let end = cursor;
 
-	while (start > -1) {
-		const text = doc.getLine(start).trim();
-		if (text.startsWith('```mindmap')) break;
-		if (text.contains('```') && !text.contains('mindmap')) return null;
-		start--; 
-	} 
-	while (end < doc.lineCount()) {
-		const text = doc.getLine(end).trim();
-		if (text.startsWith('```') && !text.contains('mindmap')) break;
-		if (text.startsWith('```mindmap')) return null;
-		end++; 
-	} 
-
-	if (start < 0 || end > doc.lineCount()) {
-		return null;
-	}
-	return {start, end};
-}
-
-// parses <map></map> tag
-function parseStudyParameters(string: string): FSRSParameters {
-	const contents = string.slice(5, -6);
-	const parameters = string.trim().split(';');
-	const props: Partial<FSRSParameters> = {
-		enable_fuzz: parameters[0] !== "" ? parameters[0] === "true" : undefined, 
-		enable_short_term: parameters[1] !== "" ? parameters[1] === "true" : undefined, 
-		maximum_interval: parameters[2] !== "" ? parseFloat(parameters[2]) : undefined, 
-		request_retention: parameters[3] !== "" ? parseFloat(parameters[3]) : undefined, 
-		w: parameters[4] !== "" ? parseNumberArray(parameters[4]) : undefined, 
-	};
-	return generatorParameters(props);
-}
-
-// parse note entry
-// any line starting with "- "
-// return note with assigned properties
-function parseNote(str: string): Note | null {
-	const string = str.trim();
-	const propsTag = noteTagRegex.exec(string);
-	// console.log("propsTag:", propsTag ? propsTag : noteDataRegex.exec(string));
-	if (!propsTag) {
-		return null;
-	}
-
-	const note = createNote(false); 
-	
-	// extract the content string from the line
-	const content = /- \s*(.*?)\s*<note>/.exec(string);
-	note.content = content ? content[1] : "blank note";
-
-	// parse the props string
-	note.props = parseNoteTag(propsTag[1]);
-	return note;
-}
-
-function parseNoteTag(str: string): NoteProperties {
-	const properties = createNoteProperties(true);
-	const props = str.split(';');
-	
-	properties.path = parsePath(props[0]);
-	properties.id = props[1] ? props[1] : null;
-	properties.study = props[2] === "true";
-	properties.card = properties.study ? parseCard(props.slice(3)) : null;
-
-	return properties;
-}
-
-function parsePath(str: string): string[] {
-	return str.split('\\');
-}
-
-function parseCard(props: string[]): Card {
-	return {
-		due: new Date(props[0]),
-    stability: parseFloat(props[1]),
-    difficulty: parseFloat(props[2]),
-    elapsed_days: parseFloat(props[3]),
-    scheduled_days: parseFloat(props[4]),
-    reps: parseFloat(props[5]),
-    lapses: parseFloat(props[6]),
-    state: parseFloat(props[7]),
-    last_review: props[8] ? new Date(props[8]) : undefined,
-	}
-}
-
-function studyable(content: string): boolean {
-	const isRelation = /:$/.exec(content) != null; // content ends with ":"
-	const containsClozes = /{.+?}/.exec(content) != null; // content includes clozes
-	return !isRelation || containsClozes;
-}
-
-function toNoteID(str: string, title: boolean = false): string {
-	const alphaNumeric = str.replace(/[^a-zA-Z0-9]/g, ''); 
-	const lowercase = alphaNumeric.toLowerCase();
-	if (title) {
-		return lowercase;
-	}
-	return lowercase.substring(0, NOTE_ID_MAX_LENGTH);
-}
-
-function toPathString(path: string[]): string {
-	return path.join('\\');
-}
-
-function formatPath(path: string[]): string {
-	return path.join(' > ');
-}
 
 // creates full tag
 function createMapTag(params: FSRSParameters, includeTags = true): string {
@@ -477,20 +359,38 @@ function noteTree(notes: string[], levels: number[], path: string[]): string[][]
 	return paths;
 }
 
-function parseNumberArray(array: string): number[] {
-	const splitString = array.split(',');
-	return splitString.map((str) => parseFloat(str));
+export function isMindMap(editor: Editor) {
+	const start = { line: 0, ch: 0 };
+	const lineCount = editor.lineCount();
+	const end = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length};
+	const text = editor.getRange(start, end);
+	for (let l = 0; l < lineCount; l++) {
+		const line = editor.getLine(l);
+		const tagMatch = mapTagRegex.exec(line);
+		if (tagMatch) {
+			return true;
+		}
+	}
+}
+
+export function addMindMapTag(editor: Editor) {
+	const tag = "<map>false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621</map>";
+	const cursor = editor.getCursor();
+	const from = {
+		line: cursor.line, 
+		ch: editor.getLine(cursor.line).length
+	} 
+	editor.replaceRange("\n" + tag, from);
 }
 
 class MindMapCreatorModal extends Modal {
-	view: EditorView;
-
 	constructor(app: App, title: string, editorCallback: (text: string) => void) {
 		super(app);
 
 		this.setTitle("Create a mind map");
-		const map: Map = {
+		const map: MapProperties = {
 			title: title ? title : "My mind map",
+			id: 'id', 
 			studySettings: generatorParameters()
 		}
 		new Setting(this.contentEl)
@@ -499,6 +399,7 @@ class MindMapCreatorModal extends Modal {
 				.setPlaceholder(map.title)
 				.onChange((value) => {
 					map.title = value;
+					map.id = toNoteID(value, true);
 				}));
 
 		new Setting(this.contentEl)
@@ -558,6 +459,65 @@ class MindMapCreatorModal extends Modal {
 	}
 }
 
+class UpdateNotesModal extends Modal {
+	constructor(app: App, editor: Editor) {
+		super(app);
+
+		this.setTitle("Update notes");
+
+		const settings = {
+			linkSimilar: false, 
+		};
+
+		new Setting(this.contentEl)
+			.setName("Link all similar notes")
+			.addToggle((toggle) => toggle
+				.setValue(false)
+				.onChange(value => settings.linkSimilar = value));
+		
+		new Setting(this.contentEl)
+			.addButton((button) => button
+				.setButtonText("Dismiss")
+				.setCta()
+				.onClick(this.close));
+
+		new Setting(this.contentEl)
+			.addButton((button) => button
+				.setButtonText("Update notes")
+				.setCta()
+				.onClick(() => {
+					updateNotes(editor);
+					this.close();
+				}));
+	}
+}
+
+class StudyNotesModal extends Modal {
+	constructor(app: App, editor: Editor) {
+		super(app);
+
+		this.setTitle("Study notes");
+		
+		new Setting(this.contentEl)
+			.setName("Update notes")
+			.addButton((button) => button
+				.setButtonText("Update")
+				.setCta()
+				.onClick(() => {
+					new UpdateNotesModal(app, editor).open();
+				}));
+		
+		new Setting(this.contentEl)
+			.setName("Study mind map")
+			.addButton((button) => button
+				.setButtonText("Let's go!")
+				.setCta()
+				.onClick(() => {
+					studyNotes(app, editor);
+					this.close();
+				}));
+	}
+}
 export class MapStudySettingsEditorModal extends Modal {
 	view: EditorView;
 
@@ -639,8 +599,16 @@ export class NotePropertyEditorModal extends Modal {
 			return;
 		}
 		this.note = note!;
+
+		let title = this.note.content;
+		if (this.note.content.endsWith(":")) {
+			title = title.substring(0, title.length - 1);
+			title = title + " (Relation)"
+		} else {
+			title = title + " (Key word)";
+		}
 		
-		this.setTitle(this.note.content);
+		this.setTitle(title);
 
 		// settings
 		new Setting(this.contentEl)
@@ -650,7 +618,7 @@ export class NotePropertyEditorModal extends Modal {
 					this.note.content = value;
 					this.note.props.path[this.note.props.path.length - 1] = toNoteID(value);
 				}))
-			.setDesc("Warning: changing the notes contents may disconnect linked notes");
+			.setDesc("Warning: changing this note's contents may disconnect linked notes");
 
 		// displays path
 		new Setting(this.contentEl)
@@ -780,14 +748,14 @@ interface ID {
 	path: string[]
 };
 class IdSuggestModal extends SuggestModal<ID> {
-	setIDCallback: (id: string) => void;
+	callback: (id: string) => void;
 	text: string;
 	notes: ID[];
 	defaultQuery: string;
 
-	constructor(app: App, view: EditorView, defaultQuery: string, setIDCallback: (id: string) => void) {
+	constructor(app: App, view: EditorView, defaultQuery: string, callback: (id: string) => void) {
 		super(app)
-		this.setIDCallback = setIDCallback;
+		this.callback = callback;
 		this.text = view.state.doc.toString();
 		this.notes = [];
 		this.defaultQuery = defaultQuery;
@@ -798,6 +766,7 @@ class IdSuggestModal extends SuggestModal<ID> {
 		while ((noteMatch = noteRegex.exec(this.text)) !== null) {
 			// console.log(noteMatch);
 			const content = noteMatch[1].trim();
+
 			const propStrings = noteMatch[2].split(';');
 			const path = parsePath(propStrings[0]);
 			this.notes.push({ content, path });
@@ -816,7 +785,7 @@ class IdSuggestModal extends SuggestModal<ID> {
 	}
 
 	onChooseSuggestion(note: ID, evt: MouseEvent | KeyboardEvent): void {
-		this.setIDCallback(toPathString(note.path));
+		this.callback(toPathString(note.path));
 		this.close();
 	}
 }
@@ -846,11 +815,3 @@ class SampleSettingTab extends PluginSettingTab {
 				}));
 	}
 }
-
-export const notePattern = "- (?<content>.*?)<note>(?<props>.*?)<\/note>";
-
-export const noteTagPattern = "<note>(.*?)<\/note>";
-const noteTagRegex = RegExp(noteTagPattern, 'm');
-
-export const mapTagPattern = "<map>(.*?)<\/map>";
-const mapTagRegex = RegExp(mapTagPattern, 'm');
