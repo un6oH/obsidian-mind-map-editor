@@ -2,6 +2,7 @@ import { generatorParameters, createEmptyCard, FSRSParameters, Card } from "ts-f
 import { MapProperties, NoteProperties, Note, MindMap } from "types";
 
 export const notePattern = "- (?<content>.*?)<note>(?<props>.*?)<\/note>";
+export const noteRegex = RegExp(notePattern, 'm');
 
 export const noteTagPattern = "<note>(.*?)<\/note>";
 export const noteTagRegex = RegExp(noteTagPattern, 'm');
@@ -21,7 +22,7 @@ export function parseMindMap(text: string): MindMap | null {
 
 	const titlePattern = new RegExp("# (.*?)$", 'm');
 	let titleMatch = titlePattern.exec(text);
-  console.log(titleMatch);
+  // console.log(titleMatch);
 	if (!titleMatch) {
 		console.log("Mind map title not found");
 		return null;
@@ -89,20 +90,21 @@ export function parseStudyParameters(string: string): FSRSParameters {
 // return note with assigned properties
 export function parseNote(str: string): Note | null {
 	const string = str.trim();
-	const propsTag = noteTagRegex.exec(string);
+  // const noteRegex = new RegExp(notePattern, 'd');
+	const match = noteRegex.exec(string);
 	// console.log("propsTag:", propsTag ? propsTag : noteDataRegex.exec(string));
-	if (!propsTag) {
+	if (!match) {
 		return null;
 	}
 
 	const note = createNote(false); 
 	
 	// extract the content string from the line
-	const content = /- \s*(.*?)\s*<note>/.exec(string);
-	note.content = content ? content[1] : "blank note";
+	const content = match[1];
+	note.content = content ? content : "blank note";
 
 	// parse the props string
-	note.props = parseNoteTag(propsTag[1]);
+	note.props = parseNoteTag(match[2]);
 	return note;
 }
 
@@ -139,8 +141,27 @@ export function parseCard(props: string[]): Card {
 
 export function studyable(content: string): boolean {
 	const isRelation = /:$/.exec(content) != null; // content ends with ":"
-	const containsClozes = /{.+?}/.exec(content) != null; // content includes clozes
+	const containsClozes = /{.+?}/.test(content); // content includes clozes
 	return !isRelation || containsClozes;
+}
+
+interface NoteType {
+  keyWord: boolean;
+  study: boolean;
+}
+export function noteType(content: string): NoteType {
+  const type = {
+    keyWord: true, 
+    study: true, 
+  }
+  if (content.trim().endsWith(":")) {
+    type.keyWord = false;
+  }
+  if (!type.keyWord) {
+    const containsClozes = /{.+?}/.test(content);
+    type.study = containsClozes;
+  }
+  return type;
 }
 
 const NOTE_ID_MAX_LENGTH = 12;

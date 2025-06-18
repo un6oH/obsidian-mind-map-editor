@@ -5,7 +5,7 @@ import { Card, createEmptyCard, FSRSParameters, generatorParameters, State, Stat
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { MapProperties, Note, NoteProperties, MindMap } from 'types';
-import { notePattern, noteTagPattern, noteTagRegex, mapTagPattern, mapTagRegex, parseCard, parseMindMap, parseNote, parseNoteTag, parseNumberArray, parsePath, parseStudyParameters, createNote, createNoteProperties, studyable, toNoteID, toPathString, formatPath } from 'helpers';
+import { notePattern, noteTagPattern, noteTagRegex, mapTagPattern, mapTagRegex, parseCard, parseMindMap, parseNote, parseNoteTag, parseNumberArray, parsePath, parseStudyParameters, createNote, createNoteProperties, studyable, toNoteID, toPathString, formatPath, noteType } from 'helpers';
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
@@ -115,7 +115,7 @@ export default class MyPlugin extends Plugin {
 			hotkeys: [{ modifiers: ['Ctrl', 'Shift'], key: 'u' }],
 			editorCallback: (editor: Editor) => {
 				if (isMindMap(editor)) {
-					updateNotes(editor);
+					new UpdateNotesModal(this.app, editor).open();
 				} else {
 					new Notice("This document is not a mind map!");
 				}
@@ -153,7 +153,7 @@ async function studyNotes(app: App, editor: Editor) {
 	const from = { line: 0, ch: 0 };
 	const to = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length };
 	const mindMap = parseMindMap(editor.getRange(from, to));
-	
+
 	if (!mindMap) {
 		new Notice("Mind map not found");
 		return;
@@ -185,7 +185,14 @@ async function studyNotes(app: App, editor: Editor) {
 // new note
 // changed path
 // changed studyable status
-function updateNotes(editor: Editor) {
+interface similarNotes {
+	content: string;
+	indices: number[];
+	levels: number[]; 
+	parent: number | null;
+	ref: number;
+}
+function updateNotes(editor: Editor, linkSimilar: boolean) {
 	const doc = editor.getDoc();
 	const start = 0;
 	const end = doc.lineCount();
@@ -196,18 +203,74 @@ function updateNotes(editor: Editor) {
 	const notes: string[] = [];
 	const lines: number[] = [];
 	const levels: number[] = [];
+	// stores content, index, and level of every instance of the same content
+	// ref stores the index of the lowest level (reference) instance
+  const uniqueNotes: similarNotes[] = [];
 	for (let l = start; l < end; l++) {
 		const line = doc.getLine(l);
 		if (line.trim().startsWith('- ')) {
 			let note = line.trim().substring(2); // row without bullet point
 			note = note.split('<note>')[0].trim(); // row without data
-			notes.push(note);
+			const index = notes.push(note) - 1;
 			lines.push(l);
 			const tabMatch = line.match(/^\t+/g);
-			levels.push(tabMatch ? tabMatch[0].length : 0);
+			const level = tabMatch ? tabMatch[0].length : 0
+			levels.push(level);
+
+			if (note.endsWith(":")) { // relations link to the first instance of a sibling
+				let parent = index - 1; // index of parent note; -1 if note is level 0
+				if (level == 0) {
+					parent = -1;
+				} else {
+					while (parent >= 0) {
+						if (levels[parent] < level) {
+							break;
+						} else {
+							parent--;
+						}
+					}
+					if (parent < 0) parent = -1;
+				}
+
+				const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === note && entry.parent === parent);
+				if (uniqueIndex == -1) {
+					uniqueNotes.push({
+						content: note, 
+						indices: [index], 
+						levels: [level], 
+						parent: parent,  
+						ref: index,
+					});
+				} else {
+					uniqueNotes[uniqueIndex].indices.push(index);
+					uniqueNotes[uniqueIndex].levels.push(level);
+				}
+			} else { // key words link to the lowest level instance
+				const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === note);
+			
+				if (uniqueIndex == -1) {
+					// console.log("unique note:", note);
+					uniqueNotes.push({
+						content: note, 
+						indices: [index], 
+						levels: [level], 
+						parent: null,  
+						ref: index,
+					});
+				} else {
+					const uniqueEntry = uniqueNotes[uniqueIndex];
+					// console.log("existing note:", note);
+					uniqueNotes[uniqueIndex].indices.push(index);
+					uniqueNotes[uniqueIndex].levels.push(level);
+
+					if (levels[uniqueEntry.ref] > level) {
+						uniqueNotes[uniqueIndex].ref = index;
+					}
+				}
+			}
 		}
 	}
-	// console.log(levels);
+	console.log("updateNotes() unique notes:", uniqueNotes);
 
 	// find title
 	let mindMapTitle = "untitled";
@@ -215,61 +278,76 @@ function updateNotes(editor: Editor) {
 	for (let line = 0; line < end; line++) {
 		let match = titleRegex.exec(doc.getLine(line))
 		if (match) {
-			console.log("title match:", match);
+			// console.log("title match:", match);
 			mindMapTitle = match[1];
 			break;
 		}
 	}
 
 	// recursively iterates through list to generate a list of paths
-	const tree = noteTree(notes, levels, [toNoteID(mindMapTitle, true)]);
+	const paths = noteTree(notes, levels, [toNoteID(mindMapTitle, true)]);
 
 	// update the props tag for each note
 	for (let i = 0; i < lines.length; i++) {
+		const note = notes[i];
 		const line = lines[i];
-		const path = tree[i];
+		const path = paths[i];
 		const text = doc.getLine(line);
-		const propsText = noteTagRegex.exec(text);
-		// console.log("contains property string:", propertyString);
 		
-		const study = studyable(notes[i]);
+		const type = noteType(note);
+		const study = type.study;
 
-		if (propsText) { // only replace path string in existing tag
-			const note = parseNote(text);
+		let id = null;
+		
+		// if link similar is enabled, find the id of the reference note
+		if (type.keyWord) { // key words all link to the reference (if linking is enabled)
+			if (linkSimilar) {
+				const uniqueEntry = uniqueNotes.find(entry => entry.content === note);
+				if (uniqueEntry!.indices.length > 1) {
+					const ref = uniqueEntry!.ref;
+					id = toPathString(paths[ref]);
+				}
+			}
+		} else { // relations always link to siblings
+			const uniqueEntry = uniqueNotes.find(entry => entry.content === note && entry.indices.contains(i));
+			if (uniqueEntry!.indices.length > 1) {
+				const ref = uniqueEntry!.ref;
+				id = toPathString(paths[ref]);
+			}
+		}
+		
+		const tagMatch = noteTagRegex.exec(text);
+		if (tagMatch) { // tag exists; only replace path string and/or id
+			const props = parseNoteTag(tagMatch[1]);
 			// console.log("note:", note);
 			if (!note) continue;
 
-			let replaceProps = false;
-			// console.log("new path:", path, "current path:", note.props.path);
-			if (toPathString(path) !== toPathString(note.props.path)) {
-				note.props.path = path;
-				replaceProps = true;
-			}
-			if (study != note.props.study) {
-				replaceProps = true;
-				if (study) {
-					note.props.study = true;
-					note.props.card = createEmptyCard(Date.now());
-				} else {
-					note.props.study = false;
-					note.props.card = null;
-				}
+			props.path = paths[i];
+			// if the note has an existing id, don't change it
+			// 
+			if (!props.id) props.id = id;
+
+			if (study) {
+				props.study = true;
+				props.card = createEmptyCard(Date.now());
+			} else {
+				props.study = false;
+				props.card = null;
 			}
 
-			if (replaceProps) {
-				const propsTag = noteTagRegex.exec(text);
-				const positionCh = text.search(noteTagRegex);
-				const tagLength = propsTag![0].length;
+			const positionCh = text.indexOf(tagMatch[1]);
+			const tagLength = tagMatch[1].length;
 
-				editor.replaceRange(
-					createNoteTag(note.props), 
-					{ line: line, ch: positionCh }, 
-					{ line: line, ch: positionCh + tagLength }
-				)
-			}
+			// console.log(line, text, tagMatch, positionCh, tagLength);
+			editor.replaceRange(
+				createNoteTag(props, false), 
+				{ line: line, ch: positionCh }, 
+				{ line: line, ch: positionCh + tagLength }
+			);
 		} else { // add properties tag
 			const props = createNoteProperties(study);
 			props.path = path;
+			props.id = id;
 			
 			editor.replaceRange(
 				" " + createNoteTag(props), 
@@ -486,7 +564,7 @@ class UpdateNotesModal extends Modal {
 				.setButtonText("Update notes")
 				.setCta()
 				.onClick(() => {
-					updateNotes(editor);
+					updateNotes(editor, settings.linkSimilar);
 					this.close();
 				}));
 	}
@@ -592,7 +670,9 @@ export class NotePropertyEditorModal extends Modal {
 		this.view = view;
 		this.indices = indices;
 
-		let note = parseNote(view.state.doc.sliceString(indices[0][0], indices[0][1]));
+		const string = view.state.doc.sliceString(indices[0][0], indices[0][1]);
+		// console.log(string);
+		let note = parseNote(string);
 		if (!note) {
 			new Notice("No note found");
 			this.close();
@@ -614,8 +694,8 @@ export class NotePropertyEditorModal extends Modal {
 		new Setting(this.contentEl)
 			.setName("Text:")
 			.addText((text) => 
-				text.setValue(this.note.content).onChange((value) => {
-					this.note.content = value;
+				text.setValue(this.note.content.trim()).onChange((value) => {
+					this.note.content = value.trim();
 					this.note.props.path[this.note.props.path.length - 1] = toNoteID(value);
 				}))
 			.setDesc("Warning: changing this note's contents may disconnect linked notes");
@@ -722,7 +802,7 @@ export class NotePropertyEditorModal extends Modal {
 			changes: {
 				from: indices[1][0], 
 				to: indices[1][1], 
-				insert: this.note.content + " ", 
+				insert: this.note.content.trim() + " ", 
 			}
 		});
 

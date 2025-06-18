@@ -27,3 +27,8 @@ If your plugin does not need CSS, delete this file.
 .widget-note-nostudy {
   opacity: 25%;
 }
+
+.mindmap-text {
+  color: white;
+  opacity: 90%;
+}

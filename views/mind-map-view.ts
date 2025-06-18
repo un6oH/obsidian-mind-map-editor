@@ -25,6 +25,10 @@ const levelColour = [
   'indigo', 
   'violet',
 ];
+const colour = (level: number) => {
+  const value = 255 / (level + 1);
+  return `rgb(${value} ${value} ${value})`;
+}
 
 export class MindMapView extends ItemView {
   mindMap: MindMap;
@@ -73,29 +77,31 @@ export class MindMapView extends ItemView {
       content: this.mindMap.map.title, 
       level: 0,
     });
-    console.log("map:", this.mindMap.map.id);
+    // console.log("map:", this.mindMap.map.id);
 
     // add notes
+    const nodeIDs: string[] = [];
     for (let note of this.mindMap.notes) {
-      let id = "";
+      let id = toPathString(note.props.path);
       if (note.props.id) {
         id = note.props.id;
-      } else {
-        id = toPathString(note.props.path)
       }
-      console.log("note:", id);
 
-      this.nodes.push({
-        id: id, 
-        content: note.content, 
-        level: note.props.path.length - 1
-      });
+      if (!nodeIDs.contains(id)) { // only add unique nodes
+        this.nodes.push({
+          id: id, 
+          content: note.content, 
+          level: note.props.path.length - 1
+        });
+        nodeIDs.push(id);
+      }
 
       this.links.push({
         source: toPathString(note.props.path.slice(0, -1)), 
         target: id
       });
     }
+    console.log("all node ids:", nodeIDs);
 
     this.createGraph();
   }
@@ -116,6 +122,7 @@ export class MindMapView extends ItemView {
     this.simulation = d3.forceSimulation<Node>(this.nodes)
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
       .force('charge', d3.forceManyBody())
+      .force("center", d3.forceCenter(0, 0))
       .force('x', d3.forceX())
       .force('y', d3.forceY());
     this.simulation.on('tick', () => this.updateGraph());
@@ -154,8 +161,10 @@ export class MindMapView extends ItemView {
     this.node = this.node.data(this.nodes, (d: Node) => d.id);
     this.node.exit().remove();
     this.node = this.node.enter().append('circle')
+      .attr("stroke", "#fff")
+      .attr("stroke-width", 1)
       .attr('r', 5)
-      .attr('fill', d => levelColour[d.level])
+      .attr('fill', d => colour(d.level))
       .call(d3.drag<SVGCircleElement, Node>()
           .on('start', (event, d) => {
               if (!event.active) this.simulation.alphaTarget(0.3).restart();
@@ -173,6 +182,8 @@ export class MindMapView extends ItemView {
           })
       )
       .merge(this.node);
+
+    this.node.append("title").text(d => d.id);
 
     this.label = this.label.data(this.nodes, (d: Node) => d.id);
     this.label.exit().remove();
