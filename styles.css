@@ -32,3 +32,13 @@ If your plugin does not need CSS, delete this file.
   color: white;
   opacity: 90%;
 }
+
+.mind-map-view-container {
+  display: block;
+}
+
+.mind-map-view-graph-container {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+}

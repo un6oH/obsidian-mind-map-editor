@@ -67,6 +67,7 @@ class NoteDataWidget extends WidgetType {
     button.addClass(this.isKeyWord ? 'widget-note-keyword' : 'widget-note-relation');
     button.addClass(this.isStudyable ? 'widget-note-study' : 'widget-note-nostudy');
     button.onclick = () => {
+      // console.log("NoteDataWidget() indices", this.indices);
       new NotePropertyEditorModal(this.plugin, this.view, this.indices).open();
     };
     return button;
@@ -108,7 +109,8 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
           // find every match in the full text
           while ((noteMatch = noteRegex.exec(text)) !== null) {
             // console.log(noteMatch);
-            const indices: number[][] = (noteMatch as any).indices;
+            let indices: number[][] = (noteMatch as any).indices;
+            indices = indices.map((pair) => [pair[0] + from, pair[1] + from]);
             const content = noteMatch[1].trim();
             let isKeyWord = true;
             if (content.endsWith(':')) isKeyWord = false; 
@@ -117,8 +119,10 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
             if (props.contains('false')) isStudyable = false;
 
             // widget replaces <{note>...<\/note}>
-            const start = from + indices[2][0] - 5; 
-            const end = from + indices[2][1] + 6;
+            // const start = from + indices[2][0] - 5; 
+            // const end = from + indices[2][1] + 6;
+            const start = indices[2][0] - 5
+            const end = indices[2][1] + 6;
             const deco = Decoration.replace({
               widget: new NoteDataWidget(plugin, view, indices, isKeyWord, isStudyable),
               inclusive: false

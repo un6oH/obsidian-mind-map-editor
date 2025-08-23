@@ -70,7 +70,11 @@ export default class MyPlugin extends Plugin {
 			new StudyNotesModal(this.app, activeView!.editor).open();
 		}
 
-		// shows 
+		const cursorIndexStatusBarItem = this.addStatusBarItem();
+		cursorIndexStatusBarItem.addClass('mod-clickable');
+		cursorIndexStatusBarItem.textContent = "Cursor at:";
+		
+		// trigger status bar items to show 
 		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
 			const leaf = this.app.workspace.getActiveViewOfType(MarkdownView);
 			if (leaf && isMindMap(leaf.editor)) {
@@ -80,7 +84,13 @@ export default class MyPlugin extends Plugin {
 				updateNotesStatusBarItem.hide();
 				studyMindMapStatusBarItem.hide();
 			}
-		}))
+		}));
+
+		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+			const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+			const cursorPosition = editor?.getCursor('head');
+			cursorIndexStatusBarItem.textContent = `Cursor at: ${cursorPosition?.line}, ${cursorPosition?.ch}`;
+		});
 
 		// Add a command to create a mindmap template
 		this.addCommand({
@@ -118,6 +128,23 @@ export default class MyPlugin extends Plugin {
 					new UpdateNotesModal(this.app, editor).open();
 				} else {
 					new Notice("This document is not a mind map!");
+				}
+			}
+		});
+
+		this.addCommand({
+			id: 'mindmapeditor-get-cursor-index', 
+			name: 'Get cursor index', 
+			editorCallback: (editor: Editor) => {
+				if (isMindMap(editor)) {
+					const cursorPosition = editor.getCursor();
+					let nCharacters = 0;
+					for (let l = cursorPosition.line - 1; l >= 0; l--) {
+						nCharacters += editor.getLine(l).length;
+					}
+					console.log("cursor index:", nCharacters + cursorPosition.ch);
+				} else {
+					new Notice("Not in an editor.");
 				}
 			}
 		});
@@ -324,8 +351,8 @@ function updateNotes(editor: Editor, linkSimilar: boolean) {
 
 			props.path = paths[i];
 			// if the note has an existing id, don't change it
-			// 
-			if (!props.id) props.id = id;
+			// relations do not link
+			if (!props.id || !type.keyWord) props.id = id;
 
 			if (study) {
 				props.study = true;
@@ -671,6 +698,7 @@ export class NotePropertyEditorModal extends Modal {
 		this.indices = indices;
 
 		const string = view.state.doc.sliceString(indices[0][0], indices[0][1]);
+		// console.log(indices);
 		// console.log(string);
 		let note = parseNote(string);
 		if (!note) {
