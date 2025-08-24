@@ -42,3 +42,8 @@ If your plugin does not need CSS, delete this file.
   height: 100%;
   padding: 0;
 }
+
+.mindmap-node-label {
+  fill: white;
+  font-size: small;
+}

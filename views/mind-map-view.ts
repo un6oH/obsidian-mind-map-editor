@@ -10,6 +10,10 @@ export interface Node extends d3.SimulationNodeDatum {
   id: string;
   content: string;
   level: number;
+  study: boolean;
+  centre: boolean;
+  fx: number | null;
+  fy: number | null;
 }
 
 export interface Link extends d3.SimulationLinkDatum<Node> {
@@ -27,9 +31,12 @@ const levelColour = [
   'violet',
 ];
 
+const COLOUR_STROKE = 'lightgrey';
+
 const colour = (level: number) => {
-  const value = 255 / (level + 1);
-  return `rgb(${value} ${value} ${value})`;
+  // const value = 255 / (level + 1);
+  // return `rgb(${value} ${value} ${value})`;
+  return d3.interpolateRainbow((level % 6) / 6);
 }
 
 const size = (level: number) => 4 + 6 / (level + 1);
@@ -98,6 +105,10 @@ export class MindMapView extends ItemView {
       id: this.mindMap.map.id, 
       content: this.mindMap.map.title, 
       level: 0,
+      study: false, 
+      centre: true, 
+      fx: 0, 
+      fy: 0, 
     });
     // console.log("map:", this.mindMap.map.id);
 
@@ -110,10 +121,28 @@ export class MindMapView extends ItemView {
       }
 
       if (!nodeIDs.contains(id)) { // only add unique nodes
+        let level = note.props.path.length - 1;
+        let pathBuffer = note.props.path.slice(0, level);
+        // console.log(toPathString(pathBuffer), "level:", level);
+        while (pathBuffer.length > 0) {
+          let targetId = toPathString(pathBuffer);
+          let target = mindMap.notes.find((note) => toPathString(note.props.path) === targetId);
+          if (!target?.props.study) {
+            // console.log(`note not studyable id: ${targetId}`);
+            level--;
+          }
+          pathBuffer.pop();
+        }
+        // console.log("level:", level);
         this.nodes.push({
           id: id, 
           content: note.content, 
-          level: note.props.path.length - 1
+          // level: note.props.path.length - 1, 
+          level: level, 
+          study: note.props.study, 
+          centre: false, 
+          fx: null, 
+          fy: null, 
         });
         nodeIDs.push(id);
       }
@@ -137,7 +166,7 @@ export class MindMapView extends ItemView {
       .force('y', d3.forceY())
       // .on;
       // .alphaTarget(0.001);
-    this.simulation.on('tick', () => this.updateGraph());
+      .on('tick', () => this.updateGraph());
 
     this.graphContainer.empty();
 
@@ -159,51 +188,54 @@ export class MindMapView extends ItemView {
       .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
       .call(d3.zoom<SVGSVGElement, unknown>()
         .extent([[-this.width / 2, -this.height / 2], [this.width / 2, this.height / 2]])
-        .scaleExtent([1, 10])
+        .scaleExtent([0.1, 2])
         .on("zoom", (event) => this.zoomed(event)));
     
     // this.link = this.svg.append('g').selectAll<SVGLineElement, Link>('line');
     // this.node = this.svg.append('g').selectAll<SVGCircleElement, Node>('circle');
     // this.label = this.svg.append('g').selectAll<SVGTextElement, Node>('text');
     this.link = this.svg.append('g')
-        .attr('stroke', '#999')
-        .attr('stroke-width', 2)
       .selectAll<SVGLineElement, Link>('line')
       .data(this.links)
-      .join('line');
+      .join('line')
+        .attr('stroke', COLOUR_STROKE)
+        .attr('stroke-width', 2);
     this.node = this.svg.append('g')
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 1)
       .selectAll<SVGCircleElement, Node>('circle')
       .data(this.nodes)
       .join('circle')
         .attr('nodeId', d => d.id)
-        .attr('fill', d => colour(d.level))
-        .attr('r', d => size(d.level))
+        .attr('fill', d => d.centre ? 'white' : (d.study ? colour(d.level) : COLOUR_STROKE))
+        .attr('r', d => d.centre ? 10 : (d.study ? size(d.level) : 3))
+        .attr("stroke", COLOUR_STROKE)
+        .attr("stroke-width", 1)
       .call(d3.drag<SVGCircleElement, Node>()
           .on('start', (event, d) => {
+              if (d.centre) return;
               if (!event.active) this.simulation.alphaTarget(0.3).restart();
-              d.fx = d.x;
-              d.fy = d.y;
+              d.fx = d.x ? d.x : null;
+              d.fy = d.y ? d.y : null;
           })
           .on('drag', (event, d) => {
+              if (d.centre) return;
               d.fx = event.x;
               d.fy = event.y;
           })
           .on('end', (event, d) => {
               if (!event.active) this.simulation.alphaTarget(0);
-              d.fx = null;
-              d.fy = null;
+              d.fx = d.centre ? 0 : null;
+              d.fy = d.centre ? 0 : null;
           })
-      )
+      );
     this.label = this.svg.append('g')
-        .attr("text-anchor", "middle")
-        .attr("dominant-baseline", "central")
-        .attr("pointer-events", "none")
       .selectAll<SVGTextElement, Node>('text')
       .data(this.nodes)
       .join('text')
-        .text(d => d.content);
+        .text(d => d.content)
+        .attr("text-anchor", "middle")
+        .attr("dominant-baseline", "central")
+        .attr("pointer-events", "none")
+        .attr("class", "mindmap-node-label");
   }
 
   updateGraph() {
@@ -274,22 +306,26 @@ export class MindMapView extends ItemView {
     let alpha = this.simulation.alpha();
     // console.log("alpha:", alpha);
     if (alpha <= MIN_ALPHA) {
-      console.log("MindMapView.updateGraph(): graph annealed");
-      let ids: string[] = [];
-      let xCoords: number[] = [];
-      let yCoords: number[] = [];
-      for (const node of this.node) {
-        ids.push(node.getAttr('nodeId')!);
-        xCoords.push(parseFloat(node.getAttr('cx')!));
-        yCoords.push(parseFloat(node.getAttr('cy')!));
-      }
-      // console.log("this.node cx:", this.node.attr('cx', d => xCoords.push(d.x!)));
-      // console.log("this.node cy:", this.node.attr('cy', d => yCoords.push(d.y!)));
-      let nodePositions = new Array(this.nodes.length).fill(0).map((v, i) => [
-        ids[i], xCoords[i], yCoords[i]
-      ]);
-      console.log("MindMapView.updateGraph(): node positions", nodePositions);
+      // this.saveGraph();
     }
+  }
+
+  saveGraph() {
+    console.log("MindMapView.saveGraph(): graph annealed");
+    let ids: string[] = [];
+    let xCoords: number[] = [];
+    let yCoords: number[] = [];
+    for (const node of this.node) {
+      ids.push(node.getAttr('nodeId')!);
+      xCoords.push(parseFloat(node.getAttr('cx')!));
+      yCoords.push(parseFloat(node.getAttr('cy')!));
+    }
+    // console.log("this.node cx:", this.node.attr('cx', d => xCoords.push(d.x!)));
+    // console.log("this.node cy:", this.node.attr('cy', d => yCoords.push(d.y!)));
+    let nodePositions = new Array(this.nodes.length).fill(0).map((_, i) => [
+      ids[i], xCoords[i], yCoords[i]
+    ]);
+    console.log("MindMapView.saveGraph(): node positions", nodePositions);
   }
 
   resize() {
