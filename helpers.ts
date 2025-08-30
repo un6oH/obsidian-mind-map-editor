@@ -10,6 +10,9 @@ export const noteTagRegex = RegExp(noteTagPattern, 'm');
 export const mapTagPattern = "<map>(.*?)<\/map>";
 export const mapTagRegex = RegExp(mapTagPattern, 'm');
 
+export const pastedImagePattern = "\!\[\[Pasted image (.*?)\.png\]\]";
+export const pastedImageRegex = RegExp(pastedImagePattern, 'm');
+
 export function parseMindMap(text: string): MindMap | null {
 	const mindMap: MindMap = {
 		map: {
@@ -165,13 +168,35 @@ export function noteType(content: string): NoteType {
 }
 
 const NOTE_ID_MAX_LENGTH = 12;
+// const pastedImageRegexGlobal = RegExp(pastedImagePattern, 'gm');
 export function toNoteID(str: string, title: boolean = false): string {
+	// console.log("toNoteID() string:", str);
+	const imageMatch = /\!\[\[Pasted image (.*?)\.png\]\]/.exec(str);
+	if (imageMatch) {
+		// console.log(imageMatch[1]);
+		// return "pastedimage" + Math.round(Math.random() * 100000);
+		return imageMatch[1];
+	}
+
 	const alphaNumeric = str.replace(/[^a-zA-Z0-9]/g, ''); 
 	const lowercase = alphaNumeric.toLowerCase();
 	if (title) {
+		// console.log(lowercase);
 		return lowercase;
 	}
-	return lowercase.substring(0, NOTE_ID_MAX_LENGTH);
+
+	if (lowercase.length > 12) {
+		let result = "";
+		let interval = (lowercase.length + 0.5) / 12;
+		for (let i = 0; i < lowercase.length; i += interval) {
+			result += lowercase.charAt(i);
+		}
+		// console.log(result);
+		return result;
+	} else {
+		// console.log(lowercase);
+		return lowercase
+	}
 }
 
 export function toPathString(path: string[]): string {

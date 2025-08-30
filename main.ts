@@ -5,7 +5,7 @@ import { Card, createEmptyCard, FSRSParameters, generatorParameters, State, Stat
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { MapProperties, Note, NoteProperties, MindMap, Settings, MindMapLayout } from 'types';
-import { notePattern, noteTagPattern, noteTagRegex, mapTagPattern, mapTagRegex, parseCard, parseMindMap, parseNote, parseNoteTag, parseNumberArray, parsePath, parseStudyParameters, createNote, createNoteProperties, studyable, toNoteID, toPathString, formatPath, noteType } from 'helpers';
+import { notePattern, noteTagPattern, noteTagRegex, mapTagPattern, mapTagRegex, parseCard, parseMindMap, parseNote, parseNoteTag, parseNumberArray, parsePath, parseStudyParameters, createNote, createNoteProperties, studyable, toNoteID, toPathString, formatPath, noteType, pastedImagePattern } from 'helpers';
 // Remember to rename these classes and interfaces!
 
 const DEFAULT_SETTINGS = {
@@ -310,7 +310,7 @@ function updateNotes(editor: Editor, linkSimilar: boolean) {
 			}
 		}
 	}
-	console.log("updateNotes() unique notes:", uniqueNotes);
+	// console.log("updateNotes() unique notes:", uniqueNotes);
 
 	// find title
 	let mindMapTitle = "untitled";
@@ -326,6 +326,7 @@ function updateNotes(editor: Editor, linkSimilar: boolean) {
 
 	// recursively iterates through list to generate a list of paths
 	const paths = noteTree(notes, levels, [toNoteID(mindMapTitle, true)]);
+	console.log("updateNotes(): parsed note tree. paths:", paths);
 
 	// update the props tag for each note
 	for (let i = 0; i < lines.length; i++) {
