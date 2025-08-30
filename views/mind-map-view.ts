@@ -1,5 +1,5 @@
 import { App, ItemView, Modal, Setting, WorkspaceLeaf } from 'obsidian';
-import { MapProperties, Note, NoteProperties, MindMap } from 'types';
+import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout } from 'types';
 import { toPathString } from 'helpers';
 import * as d3 from 'd3';
 
@@ -12,8 +12,8 @@ export interface Node extends d3.SimulationNodeDatum {
   level: number;
   study: boolean;
   centre: boolean;
-  fx: number | null;
-  fy: number | null;
+  // fx: number | null;
+  // fy: number | null;
 }
 
 export interface Link extends d3.SimulationLinkDatum<Node> {
@@ -61,9 +61,12 @@ export class MindMapView extends ItemView {
   marginBottom = 30;
   marginLeft = 40;
 
+  layout: MindMapLayout;
+  saveProgressCallback: () => void;
+  saveLayoutCallback: (layout: MindMapLayout) => void;
+
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
-    console.log("Mind map view created");
     this.nodes = [];
     this.links = [];
   }
@@ -93,23 +96,29 @@ export class MindMapView extends ItemView {
     // this.graphContainer.removeEventListener('resize', this.resize);
   }
 
-  createMindMap(mindMap: MindMap) {
-    console.log("Mind map set");
+  createMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
     this.mindMap = mindMap;
-    console.log(this.mindMap);
+    this.layout = layout;
+    this.saveProgressCallback = saveProgressCallback;
+    this.saveLayoutCallback = saveLayoutCallback;
+
+    const presetLayout = layout.ids.length != 0;
 
     this.nodes = [];
 
     // add central node (title)
-    this.nodes.push({
+    const centreNode: Node = {
       id: this.mindMap.map.id, 
       content: this.mindMap.map.title, 
       level: 0,
       study: false, 
       centre: true, 
+      x: 0, 
+      y: 0, 
       fx: 0, 
       fy: 0, 
-    });
+    }
+    this.nodes.push(centreNode);
     // console.log("map:", this.mindMap.map.id);
 
     // add notes
@@ -134,21 +143,27 @@ export class MindMapView extends ItemView {
           pathBuffer.pop();
         }
         // console.log("level:", level);
-        this.nodes.push({
+        const node: Node = {
           id: id, 
           content: note.content, 
           // level: note.props.path.length - 1, 
           level: level, 
           study: note.props.study, 
           centre: false, 
-          fx: null, 
-          fy: null, 
-        });
+        }
+        if (presetLayout) {
+          const nodeIndex = layout.ids.findIndex((value) => value === id);
+          if (nodeIndex != -1) {
+            node.x = layout.xCoords[nodeIndex];
+            node.y = layout.yCoords[nodeIndex];
+          }
+        }
+        this.nodes.push(node);
         nodeIDs.push(id);
       }
 
       this.links.push({
-        source: toPathString(note.props.path.slice(0, -1)), 
+        source: toPathString(note.props.path.slice(0, -1)), // issue 2025-08-30a
         target: id
       });
     }
@@ -306,26 +321,36 @@ export class MindMapView extends ItemView {
     let alpha = this.simulation.alpha();
     // console.log("alpha:", alpha);
     if (alpha <= MIN_ALPHA) {
-      // this.saveGraph();
+      console.log("MindMapView.updateGraph(): graph settled");
+      this.saveLayout();
     }
   }
 
-  saveGraph() {
-    console.log("MindMapView.saveGraph(): graph annealed");
-    let ids: string[] = [];
-    let xCoords: number[] = [];
-    let yCoords: number[] = [];
+  saveLayout() {
+    let id: string;
+    let x: number;
+    let y: number;
+    let i: number;
     for (const node of this.node) {
-      ids.push(node.getAttr('nodeId')!);
-      xCoords.push(parseFloat(node.getAttr('cx')!));
-      yCoords.push(parseFloat(node.getAttr('cy')!));
+      id = node.getAttr('nodeId')!;
+      x = Math.round(parseFloat(node.getAttr('cx')!)); 
+      y = Math.round(parseFloat(node.getAttr('cy')!));
+      
+      i = this.layout.ids.findIndex((value) => value === id);
+      if (i != -1) {
+        this.layout.xCoords[i] = x;
+        this.layout.yCoords[i] = y;
+      } else {
+        this.layout.ids.push(id);
+        this.layout.xCoords.push(x);
+        this.layout.yCoords.push(y);
+      }
     }
     // console.log("this.node cx:", this.node.attr('cx', d => xCoords.push(d.x!)));
     // console.log("this.node cy:", this.node.attr('cy', d => yCoords.push(d.y!)));
-    let nodePositions = new Array(this.nodes.length).fill(0).map((_, i) => [
-      ids[i], xCoords[i], yCoords[i]
-    ]);
-    console.log("MindMapView.saveGraph(): node positions", nodePositions);
+    
+    console.log("MindMapView.saveLayout(): layout", this.layout);
+    this.saveLayoutCallback(this.layout);
   }
 
   resize() {

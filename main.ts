@@ -1,31 +1,32 @@
 import { EditorView } from '@codemirror/view';
 import { Text } from '@codemirror/state';
-import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelection, MarkdownFileInfo, MarkdownPostProcessorContext, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal, WorkspaceLeaf } from 'obsidian';
+import { App, Editor, editorInfoField, EditorPosition, EditorRange, EditorSelection, FileView, MarkdownFileInfo, MarkdownPostProcessorContext, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, SuggestModal, WorkspaceLeaf } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State, StateType } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { MapProperties, Note, NoteProperties, MindMap } from 'types';
+import { MapProperties, Note, NoteProperties, MindMap, Settings, MindMapLayout } from 'types';
 import { notePattern, noteTagPattern, noteTagRegex, mapTagPattern, mapTagRegex, parseCard, parseMindMap, parseNote, parseNoteTag, parseNumberArray, parsePath, parseStudyParameters, createNote, createNoteProperties, studyable, toNoteID, toPathString, formatPath, noteType } from 'helpers';
 // Remember to rename these classes and interfaces!
 
-interface MyPluginSettings {
-	mySetting: string;
-	hideMetadata: boolean;
+const DEFAULT_SETTINGS = {
+	layouts: [], 
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default',
-	hideMetadata: true, 
-}
-
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class MindMapEditorPlugin extends Plugin {
+	settings: Settings;
 	mindMapView: MindMapView;
 
 	async onload() {
 		console.log("plugin loaded.");
 
-		await this.loadSettings();
+		await this.loadSettings().then(() => {
+			if (this.settings.layouts.length > 0) {
+				const paths = this.settings.layouts.map((layout) => layout.path);
+				console.log("Loaded saved layouts for:", paths);
+			} else {
+				console.log("No saved layouts");
+			}
+		});
 
 		this.registerEditorExtension([createMindMapEditorViewPlugin(this)]);
 
@@ -67,7 +68,7 @@ export default class MyPlugin extends Plugin {
 		studyMindMapStatusBarItem.textContent = "Study notes";
 		studyMindMapStatusBarItem.onclick = (ev) => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-			new StudyNotesModal(this.app, activeView!.editor).open();
+			new StudyNotesModal(this.app, this, activeView!.editor).open();
 		}
 
 		const cursorIndexStatusBarItem = this.addStatusBarItem();
@@ -150,7 +151,7 @@ export default class MyPlugin extends Plugin {
 		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+		// this.addSettingTab(new SampleSettingTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
@@ -175,7 +176,7 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-async function studyNotes(app: App, editor: Editor) {
+async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: Editor) {
 	const lineCount = editor.lineCount();
 	const from = { line: 0, ch: 0 };
 	const to = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length };
@@ -184,6 +185,16 @@ async function studyNotes(app: App, editor: Editor) {
 	if (!mindMap) {
 		new Notice("Mind map not found");
 		return;
+	}
+
+	const filePath = app.workspace.activeEditor?.file?.path!;
+	console.log(filePath);
+	let layoutIndex = plugin.settings.layouts.findIndex((layout) => layout.path === filePath);
+	const layout: MindMapLayout = {
+		path: filePath, 
+		ids: layoutIndex != -1 ? plugin.settings.layouts[layoutIndex].ids : [],
+		xCoords: layoutIndex != -1 ? plugin.settings.layouts[layoutIndex].xCoords : [],
+		yCoords: layoutIndex != -1 ? plugin.settings.layouts[layoutIndex].yCoords : [], 
 	}
 
 	const { workspace } = app;
@@ -204,7 +215,8 @@ async function studyNotes(app: App, editor: Editor) {
 	workspace.revealLeaf(leaf);
 
 	this.mindMapView = leaf.view as MindMapView;
-	this.mindMapView.createMindMap(mindMap);
+
+	this.mindMapView.createMindMap(mindMap, layout, () => saveProgress(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
 }
 
 // editorCallback for update notes command
@@ -219,6 +231,7 @@ interface similarNotes {
 	parent: number | null;
 	ref: number;
 }
+
 function updateNotes(editor: Editor, linkSimilar: boolean) {
 	const doc = editor.getDoc();
 	const start = 0;
@@ -488,6 +501,23 @@ export function addMindMapTag(editor: Editor) {
 	editor.replaceRange("\n" + tag, from);
 }
 
+async function saveProgress(editor: Editor) {
+
+}
+
+async function saveLayout(plugin: MindMapEditorPlugin, layout: MindMapLayout) {
+	const index = plugin.settings.layouts.findIndex((l) => l.path === layout.path);
+	if (index != -1) {
+		plugin.settings.layouts[index] = layout;
+	} else {
+		plugin.settings.layouts.push(layout);
+		console.log("saveLayout(): added new layout. Saved layouts:", new Array(plugin.settings.layouts.length).fill(0).map((_, i) => plugin.settings.layouts[i].path));
+	}
+	plugin.saveData(plugin.settings)
+		.then(() => console.log("Layout saved:", layout.path))
+		.catch((error) => console.log("Could not save layout. Error:", error));
+}
+
 class MindMapCreatorModal extends Modal {
 	constructor(app: App, title: string, editorCallback: (text: string) => void) {
 		super(app);
@@ -598,7 +628,7 @@ class UpdateNotesModal extends Modal {
 }
 
 class StudyNotesModal extends Modal {
-	constructor(app: App, editor: Editor) {
+	constructor(app: App, plugin: MindMapEditorPlugin, editor: Editor) {
 		super(app);
 
 		this.setTitle("Study notes");
@@ -618,7 +648,7 @@ class StudyNotesModal extends Modal {
 				.setButtonText("Let's go!")
 				.setCta()
 				.onClick(() => {
-					studyNotes(app, editor);
+					studyNotes(app, plugin, editor);
 					this.close();
 				}));
 	}
@@ -898,28 +928,28 @@ class IdSuggestModal extends SuggestModal<ID> {
 	}
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+// class SampleSettingTab extends PluginSettingTab {
+// 	plugin: MyPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+// 	constructor(app: App, plugin: MyPlugin) {
+// 		super(app, plugin);
+// 		this.plugin = plugin;
+// 	}
 
-	display(): void {
-		const {containerEl} = this;
+// 	display(): void {
+// 		const {containerEl} = this;
 
-		containerEl.empty();
+// 		containerEl.empty();
 
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
-}
+// 		new Setting(containerEl)
+// 			.setName('Setting #1')
+// 			.setDesc('It\'s a secret')
+// 			.addText(text => text
+// 				.setPlaceholder('Enter your secret')
+// 				.setValue(this.plugin.settings.mySetting)
+// 				.onChange(async (value) => {
+// 					this.plugin.settings.mySetting = value;
+// 					await this.plugin.saveSettings();
+// 				}));
+// 	}
+// }

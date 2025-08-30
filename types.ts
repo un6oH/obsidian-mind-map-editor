@@ -22,3 +22,15 @@ export interface MindMap {
   map: MapProperties; 
   notes: Note[]; 
 }
+
+export interface Settings {
+  layouts: MindMapLayout[];
+}
+
+export interface MindMapLayout {
+  path: string;
+  ids: string[];
+  xCoords: number[];
+  yCoords: number[];
+}
+
