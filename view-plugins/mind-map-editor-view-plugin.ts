@@ -9,7 +9,7 @@ import {
   PluginSpec,
 } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
-import { MapStudySettingsEditorModal, NotePropertyEditorModal } from 'main';
+import { MapStudySettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { EditorRange, Plugin } from 'obsidian';
 import { notePattern, noteTagPattern, mapTagPattern } from 'helpers';
 
@@ -108,21 +108,17 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
           const noteRegex = RegExp(notePattern, 'dgm');
           // find every match in the full text
           while ((noteMatch = noteRegex.exec(text)) !== null) {
-            // console.log(noteMatch);
+            // console.log("View plugin: note match:", noteMatch[0]);
             let indices: number[][] = (noteMatch as any).indices;
             indices = indices.map((pair) => [pair[0] + from, pair[1] + from]);
-            const content = noteMatch[1].trim();
-            let isKeyWord = true;
-            if (content.endsWith(':')) isKeyWord = false; 
-            const props = noteMatch[2];
-            let isStudyable = true;
-            if (props.contains('false')) isStudyable = false;
+            const content = noteMatch[2].trim();
+            let isKeyWord = !content.endsWith(':');
+            const props = noteMatch[3];
+            let isStudyable = props.contains('true');
 
             // widget replaces <{note>...<\/note}>
-            // const start = from + indices[2][0] - 5; 
-            // const end = from + indices[2][1] + 6;
-            const start = indices[2][0] - 5
-            const end = indices[2][1] + 6;
+            const start = indices[3][0] - 5
+            const end = indices[3][1] + 6;
             const deco = Decoration.replace({
               widget: new NoteDataWidget(plugin, view, indices, isKeyWord, isStudyable),
               inclusive: false

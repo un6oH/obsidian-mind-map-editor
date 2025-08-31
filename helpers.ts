@@ -1,7 +1,7 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card } from "ts-fsrs";
 import { MapProperties, NoteProperties, Note, MindMap } from "types";
 
-export const notePattern = "- (?<content>.*?)<note>(?<props>.*?)<\/note>";
+export const notePattern = "(?<list>[0-9]+\.|-)(?<content>.*?)<note>(?<props>.*?)<\/note>";
 export const noteRegex = RegExp(notePattern, 'm');
 
 export const noteTagPattern = "<note>(.*?)<\/note>";
@@ -23,6 +23,7 @@ export function parseMindMap(text: string): MindMap | null {
 		notes: []
 	};
 
+	// title
 	const titlePattern = new RegExp("# (.*?)$", 'm');
 	let titleMatch = titlePattern.exec(text);
   // console.log(titleMatch);
@@ -34,6 +35,7 @@ export function parseMindMap(text: string): MindMap | null {
     mindMap.map.id = toNoteID(titleMatch[1], true);
 	}
 
+	// map settings
 	const mapPattern = new RegExp(mapTagPattern, 'gm');
 	let mapMatch = mapPattern.exec(text);
 	if (!mapMatch) {
@@ -44,16 +46,19 @@ export function parseMindMap(text: string): MindMap | null {
 		mindMap.map.studySettings = params;
 	}
 
-
+	// note patterns
 	const noteRegex = new RegExp(notePattern, 'gm');
 	let noteMatch;
 	while ((noteMatch = noteRegex.exec(text)) !== null) {
 		// console.log(noteMatch);
-		const content = noteMatch[1].trim();
-		const propsString = noteMatch[2];
+		const content = noteMatch[2].trim();
+		const propsString = noteMatch[3];
 		const props = parseNoteTag(propsString);
+		props.listIndex = listIndex(noteMatch[1]); // override index
 		mindMap.notes.push({ content, props });
 	}
+
+	// chain notes
 
 	return mindMap;
 }
@@ -63,14 +68,15 @@ export function createNoteProperties(study: boolean): NoteProperties {
 		path: [], 
 		id: null, 
 		study: study, 
+		listIndex: 0, 
 		card: study ? createEmptyCard(Date.now()) : null, 
 	}
 }
 
-export function createNote(study = false): Note {
+export function createBlankNote(): Note {
   return {
     content: "", 
-    props: createNoteProperties(study), 
+    props: createNoteProperties(false), 
   }
 }
 
@@ -100,26 +106,27 @@ export function parseNote(str: string): Note | null {
 		return null;
 	}
 
-	const note = createNote(false); 
+	const note = createBlankNote(); 
 	
 	// extract the content string from the line
-	const content = match[1];
+	const content = match[2];
 	note.content = content ? content : "blank note";
 
 	// parse the props string
-	note.props = parseNoteTag(match[2]);
+	note.props = parseNoteTag(match[3]);
 	return note;
 }
 
-// parses contents of note tag
+// parses contents (<props> group) of note tag
 export function parseNoteTag(str: string): NoteProperties {
 	const properties = createNoteProperties(true);
 	const props = str.split(';');
 	
 	properties.path = parsePath(props[0]);
 	properties.id = props[1] ? props[1] : null;
-	properties.study = props[2] === "true";
-	properties.card = properties.study ? parseCard(props.slice(3)) : null;
+	properties.listIndex = parseFloat(props[2]);
+	properties.study = props[3] === "true";
+	properties.card = properties.study ? parseCard(props.slice(4)) : null;
 
 	return properties;
 }
@@ -199,6 +206,56 @@ export function toNoteID(str: string, title: boolean = false): string {
 	}
 }
 
+export function createNoteTag(props: NoteProperties, includeTags: boolean): string {
+	// console.log("createNoteTag(): props:", props);
+	let string = includeTags ? "<note>" : "";
+	const propStrings: string[] = [
+		toPathString(props.path), 
+		props.id ? props.id : "", 
+		props.listIndex.toString(),
+		String(props.study), 
+	];
+	propStrings.forEach(str => string += str + ';');
+
+	if (props.study && !props.card) 
+		props.card = createEmptyCard();
+	if (props.card) {
+		const cardPropStrings = [
+			props.card.due.toISOString(), 
+			props.card.stability.toString(),
+			props.card.difficulty.toString(),
+			props.card.elapsed_days.toString(),
+			props.card.scheduled_days.toString(),
+			props.card.reps.toString(),
+			props.card.lapses.toString(),
+			props.card.state.toString(), 
+			props.card.last_review ? props.card.last_review.toISOString() : ""
+		];
+		cardPropStrings.forEach(str => string += str + ';');
+	}
+
+	string += includeTags ? "</note>" : "";
+	return string;
+}
+
+// creates map tag
+export function createMapTag(params: FSRSParameters, includeTags = true): string {
+	let string = "";
+	const propStrings = [
+		params.enable_fuzz.toString(), 
+		params.enable_short_term.toString(), 
+		params.maximum_interval.toString(),
+		params.request_retention.toString(), 
+		params.w.join(','), 
+	]
+	propStrings.forEach(str => string += str + ';');
+
+	if (includeTags)
+		string = "<map>" + string + "</map>";
+
+	return string;
+}
+
 export function toPathString(path: string[]): string {
 	return path.join('\\');
 }
@@ -210,4 +267,9 @@ export function formatPath(path: string[]): string {
 export function parseNumberArray(array: string): number[] {
   const splitString = array.split(',');
   return splitString.map((str) => parseFloat(str));
+}
+
+export function listIndex(str: string): number {
+	const parse = parseFloat(str);
+	return isNaN(parse) ? 0 : parse;
 }

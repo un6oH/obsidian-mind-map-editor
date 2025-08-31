@@ -9,6 +9,7 @@ export interface MapProperties {
 export interface NoteProperties {
   path: string[]; // all parents
   id: string | null; // id of node if linked to another branch. node defaults to path if null
+  listIndex: number; // number in list. 0 if unordered list
   study: boolean; // whether the node can be studied
   card: Card | null; // null if the node is not studyable
 }
