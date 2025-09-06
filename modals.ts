@@ -21,7 +21,7 @@ export class MindMapCreatorModal extends Modal {
 				.setPlaceholder(map.title)
 				.onChange((value) => {
 					map.title = value;
-					map.id = toNoteID(value, true);
+					map.id = toNoteID(value, false);
 				}));
 
 		new Setting(this.contentEl)

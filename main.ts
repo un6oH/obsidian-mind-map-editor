@@ -316,7 +316,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 
 	// recursively iterates through list to generate a list of paths
 	// console.log("updateNotes(): title:", title);
-	const titleID = toNoteID(title);
+	const titleID = toNoteID(title, false);
 	const paths = noteTree(notes, levels, [titleID]);
 	// console.log("updateNotes(): parsed note tree. paths:", paths);
 
@@ -390,6 +390,8 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 			);
 		}
 	}
+
+	console.log(`updateNotes(): updated ${notes.length} notes`);
 }
 
 // input: array of note content and associated line number and indent level
@@ -409,7 +411,7 @@ function noteTree(notes: string[], levels: number[], path: string[]): string[][]
 	let paths: string[][] = []; // path accumulator
 	for (let index = 0; index < minLevelIndices.length - 1; index++) {
 		const i = minLevelIndices[index];
-		let self = toNoteID(notes[i]); // reduce to first 12 characters
+		let self = toNoteID(notes[i]); // convert to id
 		let newPath = path.concat(self);
 		paths.push(newPath);
 		// console.log("added new path", newPath);

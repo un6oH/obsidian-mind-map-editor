@@ -32,7 +32,7 @@ export function parseMindMap(text: string): MindMap | null {
 		return null;
 	} else {
 		mindMap.map.title = titleMatch[1];
-    mindMap.map.id = toNoteID(titleMatch[1], true);
+    mindMap.map.id = toNoteID(titleMatch[1], false);
 	}
 
 	// map settings
@@ -187,10 +187,10 @@ export function toNoteID(str: string, title: boolean = false): string {
 
 	const alphaNumeric = str.replace(/[^a-zA-Z0-9]/g, ''); 
 	const lowercase = alphaNumeric.toLowerCase();
-	if (title) {
-		// console.log(lowercase);
-		return lowercase;
-	}
+	// if (title) {
+	// 	// console.log(lowercase);
+	// 	return lowercase;
+	// }
 
 	if (lowercase.length > 12) {
 		let result = "";
