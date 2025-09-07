@@ -184,6 +184,7 @@ export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: 
 	const from = { line: 0, ch: 0 };
 	const to = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length };
 	const mindMap = parseMindMap(editor.getRange(from, to));
+	console.log("studyNotes(): mind map parsed: ", mindMap);
 
 	if (!mindMap) {
 		new Notice("Mind map not found");
@@ -191,7 +192,7 @@ export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: 
 	}
 
 	const filePath = app.workspace.activeEditor?.file?.path!;
-	console.log(filePath);
+	// console.log(filePath);
 	let layoutIndex = plugin.settings.layouts.findIndex((layout) => layout.path === filePath);
 	const layout: MindMapLayout = {
 		path: filePath, 
@@ -245,7 +246,10 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
   const uniqueNotes: noteGroup[] = [];
 
 	const listItemRegex = RegExp("^(?<tabs>\t*)(?<list>[0-9]+\.|-)(?<content>.+)");
-	for (let l = start; l < end; l++) {
+	// 1: tabs
+	// 2: list delimiter
+	// 3: content
+	for (let l = start; l < end; l++) { // preprocessor handles dulplicates
 		const line = doc.getLine(l);
 		const match = listItemRegex.exec(line);
 
@@ -254,7 +258,9 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 
 		const level = match[1].length;
 		listIndices.push(listIndex(match[2]));
-		let note = match[3].trim();
+		let content = match[3].split('<note>')[0];
+		let note = content;
+		// console.log("note:", content);
 
 		const index = notes.push(note) - 1;
 		lines.push(l);

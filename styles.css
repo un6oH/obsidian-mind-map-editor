@@ -45,5 +45,5 @@ If your plugin does not need CSS, delete this file.
 
 .mindmap-node-label {
   fill: white;
-  font-size: small;
+  font-size: x-small;
 }

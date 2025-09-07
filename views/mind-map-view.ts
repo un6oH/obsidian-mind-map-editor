@@ -1,10 +1,11 @@
-import { App, ItemView, Modal, Setting, WorkspaceLeaf } from 'obsidian';
+import { App, ItemView, Modal, Setting, SliderComponent, WorkspaceLeaf } from 'obsidian';
 import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout } from 'types';
 import { toPathString } from 'helpers';
 import * as d3 from 'd3';
 
 export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.001;
+const DEFAULT_ALPHADECAY = 0.2; // 1 - Math.pow(0.001, 1 / 30)
 
 export interface Node extends d3.SimulationNodeDatum {
   id: string;
@@ -19,6 +20,11 @@ export interface Node extends d3.SimulationNodeDatum {
 export interface Link extends d3.SimulationLinkDatum<Node> {
   source: string | Node;
   target: string | Node;
+}
+
+interface ChainGroup {
+  parent: string; // id of parent
+  nodes: string[] // array of nodes in the chain
 }
 
 const levelColour = [
@@ -60,6 +66,9 @@ export class MindMapView extends ItemView {
   marginRight = 20;
   marginBottom = 30;
   marginLeft = 40;
+  stepsToAnneal: number;
+
+  settingsContainer: Element;
 
   layout: MindMapLayout;
   saveProgressCallback: () => void;
@@ -86,6 +95,18 @@ export class MindMapView extends ItemView {
     container.empty();
     this.graphContainer = container.createEl('div');
     this.graphContainer.addClass('mind-map-view-graph-container');
+    this.settingsContainer = container.createEl('div');
+    this.settingsContainer.addClass('mind-map-view-settings-container');
+    
+    // settings
+    // const strengthSlider = this.settingsContainer.createEl('input');
+    // strengthSlider.type = 'range';
+    // strengthSlider.min = '0';
+    // strengthSlider.max = '4';
+    // strengthSlider.addEventListener('change', (ev: InputEvent) => {
+      
+    // });
+    
     // this.graphContainer.addEventListener('resize', this.resize);
 
     // new StudyManagerModal(this.app, "Mind Map", (mode: string) => console.log("Study started. mode:", mode)).open();
@@ -105,6 +126,7 @@ export class MindMapView extends ItemView {
     const presetLayout = layout.ids.length != 0;
 
     this.nodes = [];
+    this.links = [];
 
     // add central node (title)
     const centreNode: Node = {
@@ -120,6 +142,36 @@ export class MindMapView extends ItemView {
     }
     this.nodes.push(centreNode);
     // console.log("map:", this.mindMap.map.id);
+
+    // preprocessing step:
+    // find chain nodes
+    const chains: ChainGroup[] = [];
+    for (let note of this.mindMap.notes) {
+      let listIndex = note.props.listIndex;
+      if (listIndex == 0) continue;
+      let id = note.props.id ? note.props.id : toPathString(note.props.path);
+      let parent = toPathString(note.props.path.slice(0, -1));
+      let chainIndex = chains.findIndex((group) => group.parent === parent);
+      if (chainIndex != -1) {
+        chains[chainIndex].nodes[listIndex - 1] = id;
+      } else {
+        let i = chains.push({
+          parent: parent, 
+          nodes: []
+        });
+        chains[i - 1].nodes[listIndex - 1] = id;
+        // console.log("added chain group with parent:", parent);
+      }
+    }
+    for (let group of chains) {
+      group.nodes.forEach((id) => {
+        if (!id) {
+          console.log("MindMapView.createMindMap() Error: chain entry missing.");
+          return;
+        }
+      });
+    }
+    console.log("createMindMap(): chain groups:", chains);
 
     // add notes
     const nodeIDs: string[] = [];
@@ -162,10 +214,20 @@ export class MindMapView extends ItemView {
         nodeIDs.push(id);
       }
 
-      this.links.push({
-        source: toPathString(note.props.path.slice(0, -1)), // issue 2025-08-30a
-        target: id
-      });
+      let listIndex = note.props.listIndex;
+      let parent = toPathString(note.props.path.slice(0, -1))
+      if (note.props.listIndex > 1) {
+        let chainIndex = chains.findIndex((group) => group.parent === parent);
+        this.links.push({
+          source: chains[chainIndex].nodes[listIndex - 2], // issue 2025-08-30a
+          target: id
+        });
+      } else {
+        this.links.push({
+          source: parent, // issue 2025-08-30a
+          target: id
+        });
+      }
     }
 
     // new StudySettingsModal(this.app, this.mindMap.map.title, (mode: string) => console.log("Mode:", mode));
@@ -173,14 +235,17 @@ export class MindMapView extends ItemView {
   }
 
   async createGraph() {
+    const presetLayout = this.layout.ids.length != 0;
+    console.log("MindMapView.createGraph(): preset layout:", presetLayout);
+
     this.simulation = d3.forceSimulation<Node>(this.nodes)
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
-      .force('charge', d3.forceManyBody().strength(-100).theta(0.5))
-      // .force("center", d3.forceCenter(0, 0))
-      .force('x', d3.forceX())
-      .force('y', d3.forceY())
-      // .on;
-      // .alphaTarget(0.001);
+      .force('charge', d3.forceManyBody().strength(-100).theta(0.9).distanceMax(100))
+      // .force("center", d3.forceCenter(0, 0).strength(0.1))
+      // .force('x', d3.forceX().strength(1))
+      // .force('y', d3.forceY().strength(1))
+      .alpha(presetLayout ? 0.25 : 1)
+      .alphaDecay(presetLayout ? DEFAULT_ALPHADECAY : 0.02)
       .on('tick', () => this.updateGraph());
 
     this.graphContainer.empty();
@@ -227,7 +292,7 @@ export class MindMapView extends ItemView {
       .call(d3.drag<SVGCircleElement, Node>()
           .on('start', (event, d) => {
               if (d.centre) return;
-              if (!event.active) this.simulation.alphaTarget(0.3).restart();
+              if (!event.active) this.simulation.alphaTarget(0.5).restart();
               d.fx = d.x ? d.x : null;
               d.fy = d.y ? d.y : null;
           })
@@ -321,8 +386,12 @@ export class MindMapView extends ItemView {
     let alpha = this.simulation.alpha();
     // console.log("alpha:", alpha);
     if (alpha <= MIN_ALPHA) {
-      console.log("MindMapView.updateGraph(): graph settled");
+      this.simulation.alphaDecay(DEFAULT_ALPHADECAY);
+      console.log("MindMapView.updateGraph(): graph settled in", this.stepsToAnneal, "steps");
+      this.stepsToAnneal = 0;
       this.saveLayout();
+    } else {
+      this.stepsToAnneal++;
     }
   }
 
