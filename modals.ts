@@ -1,8 +1,8 @@
 import { EditorView } from '@codemirror/view';
 import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal } from 'obsidian';
 import { FSRSParameters, generatorParameters, State } from 'ts-fsrs';
-import { MapProperties, Note } from 'types';
-import { notePattern, parseNote, parseNumberArray, parsePath, parseStudyParameters, toNoteID, toPathString, formatPath, createNoteTag, createMapTag } from 'helpers';
+import { MapProperties, Note, Warning } from 'types';
+import { notePattern, parseNote, parseNumberArray, parsePath, parseStudyParameters, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose } from 'helpers';
 import MindMapEditorPlugin, { studyNotes, updateNotes } from 'main';
 
 export class MindMapCreatorModal extends Modal {
@@ -87,28 +87,31 @@ export class UpdateNotesModal extends Modal {
 
 		this.setTitle("Update notes");
 
-		const settings = {
-			linkSimilar: false, 
-		};
+		let proofread = true;
+	  let linkSimilar = false;
+
+		new Setting(this.contentEl)
+			.setName("Proofread")
+			.addToggle((toggle) => toggle
+				.setValue(true)
+				.onChange(value => proofread = value));
 
 		new Setting(this.contentEl)
 			.setName("Link all similar notes")
 			.addToggle((toggle) => toggle
 				.setValue(false)
-				.onChange(value => settings.linkSimilar = value));
-		
+				.onChange(value => linkSimilar = value));
+
 		new Setting(this.contentEl)
 			.addButton((button) => button
 				.setButtonText("Dismiss")
 				.setCta()
-				.onClick(this.close));
-
-		new Setting(this.contentEl)
+				.onClick(this.close))
 			.addButton((button) => button
 				.setButtonText("Update notes")
 				.setCta()
 				.onClick(() => {
-					updateNotes(editor, settings.linkSimilar, title);
+					updateNotes(editor, proofread, linkSimilar, title);
 					this.close();
 				}));
 	}
@@ -207,13 +210,11 @@ export class MapStudySettingsEditorModal extends Modal {
 // Called from note widget. Specifies start and end indices of text within widget
 export class NotePropertyEditorModal extends Modal {
 	view: EditorView;
-	indices: number[][];
 	note: Note;
 
 	constructor(plugin: Plugin, view: EditorView, indices: number[][]) {
 		super(plugin.app);
 		this.view = view;
-		this.indices = indices;
 
 		const string = view.state.doc.sliceString(indices[0][0], indices[0][1]);
 		// console.log(indices);
@@ -337,16 +338,26 @@ export class NotePropertyEditorModal extends Modal {
 		}
 		
 		new Setting(this.contentEl)
-		.addButton((btn) => {
-			btn
-				.setButtonText('OK')
-				.setCta()
-				.onClick(() => {
-					this.note.props.card = card;
-					this.close();
-					this.updateData(indices);
-				})
-		});
+			.addButton((btn) => {
+				btn
+					.setButtonText('Remove card')
+					.setCta()
+					.onClick(() => {
+						this.note.props.card = card;
+						this.close();
+						this.deleteCard(indices);
+					})
+			})
+			.addButton((btn) => {
+				btn
+					.setButtonText('OK')
+					.setCta()
+					.onClick(() => {
+						this.note.props.card = card;
+						this.close();
+						this.updateData(indices);
+					})
+			});
 		return;
 	}
 
@@ -367,6 +378,16 @@ export class NotePropertyEditorModal extends Modal {
 			}
 		});
 		this.view.dispatch(contentEdit, propsEdit);
+	}
+
+	deleteCard(indices: number[][]) {
+		const edit = this.view.state.update({
+			changes: {
+				from: indices[3][0] - noteTagOpen.length,
+				to: indices[3][1] + noteTagClose.length,
+			}
+		});
+		this.view.dispatch(edit);
 	}
 
 	setID(id: string) {

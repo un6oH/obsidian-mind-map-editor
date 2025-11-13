@@ -35,3 +35,6 @@ export interface MindMapLayout {
   yCoords: number[];
 }
 
+export enum Warning {
+  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, 
+}

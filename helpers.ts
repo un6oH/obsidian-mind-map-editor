@@ -1,17 +1,25 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card } from "ts-fsrs";
 import { MapProperties, NoteProperties, Note, MindMap } from "types";
 
-export const notePattern = "(?<list>[0-9]+\.|-)(?<content>.*?)<note>(?<props>.*?)<\/note>";
+export const noteTagOpen = "%%note";
+export const noteTagClose = "%%";
+export const notePattern = `(?<list>[0-9]+\.|-)(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
 export const noteRegex = RegExp(notePattern, 'm');
 
-export const noteTagPattern = "<note>(.*?)<\/note>";
+export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
 export const noteTagRegex = RegExp(noteTagPattern, 'm');
 
-export const mapTagPattern = "<map>(.*?)<\/map>";
+export const mapTagOpen = "%%map";
+export const mapTagClose = "%%";
+export const mapTagPattern = `${mapTagOpen}(.*?)${mapTagClose}`;
 export const mapTagRegex = RegExp(mapTagPattern, 'm');
 
 export const pastedImagePattern = "\!\[\[Pasted image (.*?)\.png\]\]";
 export const pastedImageRegex = RegExp(pastedImagePattern, 'm');
+
+export const errorTagOpen = "%%error";
+export const errorTagClose = "%%";
+export const errorTagPattern = `^.*(?<tag>${errorTagOpen}(?<type>\\d*)${errorTagClose})$`
 
 export function parseMindMap(text: string): MindMap | null {
 	const mindMap: MindMap = {
@@ -208,7 +216,7 @@ export function toNoteID(str: string, title: boolean = false): string {
 
 export function createNoteTag(props: NoteProperties, includeTags: boolean): string {
 	// console.log("createNoteTag(): props:", props);
-	let string = includeTags ? "<note>" : "";
+	let string = includeTags ? noteTagOpen : "";
 	const propStrings: string[] = [
 		toPathString(props.path), 
 		props.id ? props.id : "", 
@@ -234,7 +242,7 @@ export function createNoteTag(props: NoteProperties, includeTags: boolean): stri
 		cardPropStrings.forEach(str => string += str + ';');
 	}
 
-	string += includeTags ? "</note>" : "";
+	string += includeTags ? noteTagClose : "";
 	return string;
 }
 
@@ -251,12 +259,13 @@ export function createMapTag(params: FSRSParameters, includeTags = true): string
 	propStrings.forEach(str => string += str + ';');
 
 	if (includeTags)
-		string = "<map>" + string + "</map>";
+		string = mapTagOpen + string + mapTagClose;
 
 	return string;
 }
 
 export function toPathString(path: string[]): string {
+	if (!path) console.log("toPathString(): error");
 	return path.join('\\');
 }
 

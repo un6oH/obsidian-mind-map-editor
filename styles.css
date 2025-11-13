@@ -13,10 +13,12 @@ If your plugin does not need CSS, delete this file.
 
 .widget-note-keyword {
   color: cyan;
+  /* padding: 0.25em; */
 }
 
 .widget-note-relation {
   color: orange;
+  /* padding: 0.25em; */
 }
 
 .widget-note-study {
@@ -26,6 +28,31 @@ If your plugin does not need CSS, delete this file.
 
 .widget-note-nostudy {
   opacity: 25%;
+}
+
+.widget-error-delete {
+  font-style: italic;
+  color: red;
+  opacity: 60%;
+}
+
+.widget-error-dismiss {
+  font-style: italic;
+  color: green;
+  opacity: 60%
+}
+
+.widget-error-warning {
+  font-style: italic;
+  opacity: 60%;
+}
+
+.mark-indent-error {
+  background-color: rgba(255, 0, 0, 0.5);
+}
+
+.mark-tabs {
+  background-color: rgba(0, 0, 0, 0.5);
 }
 
 .mindmap-text {

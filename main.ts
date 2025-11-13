@@ -2,8 +2,8 @@ import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidi
 import { createEmptyCard } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout } from 'types';
-import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteTag, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, listIndex } from 'helpers';
+import { Settings, MindMapLayout, Warning } from 'types';
+import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteTag, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, listIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorTagPattern } from 'helpers';
 import { MindMapCreatorModal, StudyNotesModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
@@ -35,25 +35,17 @@ export default class MindMapEditorPlugin extends Plugin {
 			(leaf) => new MindMapView(leaf)
 		);
 
-		// const updateNotesRibbonIcon = this.addRibbonIcon('list-checks', "Update notes", () => {
-		// 	const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		// 	if (!activeView) {
-		// 		new Notice("No active editor");
-		// 		return;
-		// 	}
-		// 	new UpdateNotesModal(this.app, activeView.editor);
-		// });
-		// updateNotesRibbonIcon.addClass('my-plugin-ribbon-class');
+		const proofreadNotesStatusBarItem = this.addStatusBarItem();
+		proofreadNotesStatusBarItem.addClass('mod-clickable');
+		proofreadNotesStatusBarItem.textContent = "Check notes";
+		proofreadNotesStatusBarItem.onclick = () => {
+			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+			console.log("Proofreading document...");
+			const library = processDocument(activeView!.editor);
+			proofreadNotes(activeView!.editor, library);
+			// new ProofreadNotesModal(this.app, activeView!.editor, library.warningLines, library.warnings).open();
+		}; 
 
-		// // This creates an icon in the left ribbon.
-		// const studyNotesRibbonIcon = this.addRibbonIcon('book-open-check', 'Study mind map', () => {
-		// 	// Called when the user clicks the icon.
-		// 	this.activateView();
-		// });
-		// // Perform additional things with the ribbon
-		// studyNotesRibbonIcon.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const updateNotesStatusBarItem = this.addStatusBarItem();
 		updateNotesStatusBarItem.addClass('mod-clickable');
 		updateNotesStatusBarItem.textContent = "Update notes";
@@ -80,10 +72,12 @@ export default class MindMapEditorPlugin extends Plugin {
 			const leaf = this.app.workspace.getActiveViewOfType(MarkdownView);
 			this.currentMindMapTitle = leaf ? isMindMap(leaf.editor) : "";
 			if (leaf && this.currentMindMapTitle !== "") {
+				proofreadNotesStatusBarItem.show();
 				updateNotesStatusBarItem.show();
 				studyMindMapStatusBarItem.show();
 				studyMindMapStatusBarItem.textContent = `Study ${this.currentMindMapTitle}`;
 			} else {
+				proofreadNotesStatusBarItem.hide();
 				updateNotesStatusBarItem.hide();
 				studyMindMapStatusBarItem.hide();
 			}
@@ -233,9 +227,18 @@ interface noteGroup {
 	ref: number;
 }
 
-export function updateNotes(editor: Editor, linkSimilar: boolean, title: string) {
-	const doc = editor.getDoc();
-	const start = 0;
+interface noteLibrary {
+	notes: string[]; // content of notes
+	lines: number[]; // line number of each note
+	levels: number[]; // indent level of each note
+	listIndices: number[]; 
+  uniqueNotes: noteGroup[];
+	warningLines: number[]; // list of line numbers
+	warnings: Warning[]; // list of types
+}
+
+function processDocument(doc: Editor): noteLibrary {
+	const start = 2;
 	const end = doc.lineCount();
 	
 	// generate data to send to syntax tree processor
@@ -244,29 +247,52 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 	const levels: number[] = [];
 	const listIndices: number[] = [];
   const uniqueNotes: noteGroup[] = [];
+	const warningLines: number[] = []; // lines with associated warning
+	const warnings: Warning[] = []; // type of warning
+	// 0: does not match list item regex
+	// 1: list item is empty
+	// 2: duplicate relation
+	// 3: duplicate key word
 
-	const listItemRegex = RegExp("^(?<tabs>\t*)(?<list>[0-9]+\.|-)(?<content>.+)");
+	const listItemRegex = RegExp("^(?<tabs>\t*)(?<list>[0-9]+\.|-)(?<content>.+)"); // finds lines with a list delimiter and content
 	// 1: tabs
-	// 2: list delimiter
+	// 2: list delimiter; xx. OR -
 	// 3: content
-	for (let l = start; l < end; l++) { // preprocessor handles dulplicates
+	for (let l = start; l < end; l++) { // preprocessor handles duplicates
 		const line = doc.getLine(l);
 		const match = listItemRegex.exec(line);
 
-		if (!match) continue;
-		if (match[3].trim() === "") continue;
+		if (!match) {
+			if (line.trim() === "") {
+				// console.log(`processDocument() empty line: ${l}`);
+				warningLines.push(l);
+				warnings.push(Warning.EmptyLine);
+				continue;
+			} else {
+				// console.log(`processDocument() invalid note found at line ${l}:`, line);
+				warningLines.push(l);
+				warnings.push(Warning.Invalid);
+				continue;
+			}
+		};
+		if (match[3].trim() === "") {
+			console.log(`processDocument() empty line: ${l}`);
+			warningLines.push(l);
+			warnings.push(Warning.EmptyLine);
+			continue;
+		};
 
 		const level = match[1].length;
 		listIndices.push(listIndex(match[2]));
-		let content = match[3].split('<note>')[0];
+		let content = match[3].split(noteTagOpen)[0].trim();
 		let note = content;
-		// console.log("note:", content);
 
 		const index = notes.push(note) - 1;
 		lines.push(l);
 		levels.push(level);
 
-		if (note.endsWith(":")) { // relations link to the first instance of a sibling
+		// find duplicates
+		if (note.endsWith(":")) { // relations get added to discard list if duplicated
 			let parent = index - 1; // index of parent note; -1 if note is level 0
 			if (level == 0) {
 				parent = -1;
@@ -295,6 +321,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 				uniqueNotes[uniqueIndex].levels.push(level);
 			}
 		} else { // key words link to the lowest level instance
+			// console.log("duplicate key word:", note);
 			const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === note);
 		
 			if (uniqueIndex == -1) {
@@ -320,18 +347,58 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 	}
 	// console.log("updateNotes() unique notes:", uniqueNotes);
 
+	// push duplicate warnings to warnings
+	for (let group of uniqueNotes) {
+		if (group.indices.length == 1) {
+			continue;
+		}
+		for (let i of group.indices) {
+			warningLines.push(lines[i]);
+			warnings.push(group.content.endsWith(":") ? Warning.DuplicateRelation : Warning.DuplicateKeyWord);
+		}
+	}
+
+	return {notes, lines, levels, listIndices, uniqueNotes, warningLines, warnings};
+}
+
+function proofreadNotes(editor: Editor, library: noteLibrary) {
+	const doc = editor.getDoc();
+	for (let i = 0; i < library.warningLines.length; i++) {
+		const lineNumber = library.warningLines[i]
+		const warning = library.warnings[i];
+		const text = editor.getLine(lineNumber);
+		if (text.match(errorTagPattern)) {
+			continue;
+		}
+
+		editor.replaceRange(
+			`${errorTagOpen}${warning}${errorTagClose}`, 
+			{ line: lineNumber, ch: text.length }
+		);
+	}
+}
+
+export function updateNotes(editor: Editor, proofread: boolean, linkSimilar: boolean, title: string) {
+	const doc = editor.getDoc();
+	const library = processDocument(doc);
+	if (library.warningLines.length != 0) {
+		new Notice("Unresolved errors - fix notes");
+		return;
+	} else if (proofread) {
+		proofreadNotes(editor, library);
+	}
+
 	// recursively iterates through list to generate a list of paths
-	// console.log("updateNotes(): title:", title);
 	const titleID = toNoteID(title, false);
-	const paths = noteTree(notes, levels, [titleID]);
+	const paths = noteTree(library.notes, library.levels, []);
 	// console.log("updateNotes(): parsed note tree. paths:", paths);
 
 	// update the props tag for each note
-	for (let i = 0; i < lines.length; i++) {
-		const note = notes[i];
-		const line = lines[i];
+	for (let i = 0; i < library.lines.length; i++) {
+		const note = library.notes[i];
+		const line = library.lines[i];
 		const path = paths[i];
-		const listIndex = listIndices[i];
+		const listIndex = library.listIndices[i];
 		const text = doc.getLine(line);
 		
 		const type = noteType(note);
@@ -342,14 +409,14 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 		// if link similar is enabled, find the id of the reference note
 		if (type.keyWord) { // key words all link to the reference (if linking is enabled)
 			if (linkSimilar) {
-				const uniqueEntry = uniqueNotes.find(entry => entry.content === note);
+				const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note);
 				if (uniqueEntry!.indices.length > 1) {
 					const ref = uniqueEntry!.ref;
 					id = toPathString(paths[ref]);
 				}
 			}
 		} else { // relations always link to identical siblings
-			const uniqueEntry = uniqueNotes.find(entry => entry.content === note && entry.indices.contains(i));
+			const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note && entry.indices.contains(i));
 			if (uniqueEntry!.indices.length > 1) {
 				const ref = uniqueEntry!.ref;
 				id = toPathString(paths[ref]);
@@ -357,7 +424,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 		}
 		
 		// update the tag
-		const tagMatch = /<note>(.*?)<\/note>/.exec(text);
+		const tagMatch = noteTagRegex.exec(text);
 		if (tagMatch) { // tag exists; only replace path string and/or id
 			const props = parseNoteTag(tagMatch[1]);
 			// console.log("note:", note);
@@ -379,6 +446,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 
 			const positionCh = tagMatch.index
 			const tagLength = tagMatch[0].length;
+			// console.log(props.path.last());
 			editor.replaceRange(
 				createNoteTag(props, true), 
 				{ line: line, ch: positionCh }, 
@@ -397,7 +465,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean, title: string)
 		}
 	}
 
-	console.log(`updateNotes(): updated ${notes.length} notes`);
+	console.log(`updateNotes(): updated ${library.notes.length} notes`);
 }
 
 // input: array of note content and associated line number and indent level
@@ -406,7 +474,7 @@ function noteTree(notes: string[], levels: number[], path: string[]): string[][]
 	// get indices of lines of immediate children
 	const minLevelIndices: number[] = [];
 	for (let i = 0; i < notes.length; i++) { // iterate over each entry
-		if (levels[i] == path.length - 1) {
+		if (levels[i] == path.length) {
 			minLevelIndices.push(i); // add index of immediate child
 			// console.log(notes[i], i);
 		}
@@ -466,7 +534,7 @@ export function isMindMap(editor: Editor): string { // returns map title if map 
 }
 
 export function addMindMapTag(editor: Editor) {
-	const tag = "<map>false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621</map>";
+	const tag = `${mapTagOpen}false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621${mapTagClose}`;
 	const cursor = editor.getCursor();
 	const from = {
 		line: cursor.line, 
