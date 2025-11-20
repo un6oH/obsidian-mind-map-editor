@@ -1,9 +1,9 @@
 import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
-import { createEmptyCard } from 'ts-fsrs';
+import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout, Warning } from 'types';
-import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteTag, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, listIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorTagPattern } from 'helpers';
+import { Settings, MindMapLayout, Warning, MapProperties, MapSettings } from 'types';
+import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteTag, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, listIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex } from 'helpers';
 import { MindMapCreatorModal, StudyNotesModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
@@ -58,7 +58,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		const studyMindMapStatusBarItem = this.addStatusBarItem();
 		studyMindMapStatusBarItem.addClass('mod-clickable');
 		studyMindMapStatusBarItem.textContent = `Study mind map`;
-		studyMindMapStatusBarItem.onclick = (_) => {
+		studyMindMapStatusBarItem.onclick = () => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 			new StudyNotesModal(this.app, this, activeView!.editor, this.currentMindMapTitle).open();
 		}
@@ -173,6 +173,15 @@ export default class MindMapEditorPlugin extends Plugin {
 	}
 }
 
+export function updateMapSettings(editor: Editor, settings: MapSettings) {
+	const text = editor.getLine(1);
+	editor.replaceRange(
+		createMapTag(settings), 
+		{ line: 1, ch: 0 },
+		{ line: 1, ch: text.length },
+	)
+}
+
 export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: Editor) {
 	const lineCount = editor.lineCount();
 	const from = { line: 0, ch: 0 };
@@ -221,9 +230,9 @@ export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: 
 // ref stores the index of the lowest level (reference) instance
 interface noteGroup {
 	content: string;
-	indices: number[];
+	indices: number[]; // index in note library
 	levels: number[]; 
-	parent: number | null;
+	parentIndex: number | null; // for duplicate relations under the same parent
 	ref: number;
 }
 
@@ -238,7 +247,7 @@ interface noteLibrary {
 }
 
 function processDocument(doc: Editor): noteLibrary {
-	const start = 2;
+	const start = 0;
 	const end = doc.lineCount();
 	
 	// generate data to send to syntax tree processor
@@ -249,12 +258,8 @@ function processDocument(doc: Editor): noteLibrary {
   const uniqueNotes: noteGroup[] = [];
 	const warningLines: number[] = []; // lines with associated warning
 	const warnings: Warning[] = []; // type of warning
-	// 0: does not match list item regex
-	// 1: list item is empty
-	// 2: duplicate relation
-	// 3: duplicate key word
 
-	const listItemRegex = RegExp("^(?<tabs>\t*)(?<list>[0-9]+\.|-)(?<content>.+)"); // finds lines with a list delimiter and content
+	const listItemRegex = RegExp("^(?<tabs>\t*)(?<list>[0-9]+\. |- )(?<content>.+)"); // finds lines with a list delimiter and content
 	// 1: tabs
 	// 2: list delimiter; xx. OR -
 	// 3: content
@@ -263,6 +268,10 @@ function processDocument(doc: Editor): noteLibrary {
 		const match = listItemRegex.exec(line);
 
 		if (!match) {
+			if (/# /.exec(line) || mapTagRegex.exec(line)) {
+				continue;
+			}
+
 			if (line.trim() === "") {
 				// console.log(`processDocument() empty line: ${l}`);
 				warningLines.push(l);
@@ -274,46 +283,57 @@ function processDocument(doc: Editor): noteLibrary {
 				warnings.push(Warning.Invalid);
 				continue;
 			}
-		};
+		}
+
 		if (match[3].trim() === "") {
 			console.log(`processDocument() empty line: ${l}`);
 			warningLines.push(l);
 			warnings.push(Warning.EmptyLine);
 			continue;
-		};
+		}
 
 		const level = match[1].length;
 		listIndices.push(listIndex(match[2]));
-		let content = match[3].split(noteTagOpen)[0].trim();
-		let note = content;
+
+		// remove tags
+		let text = match[3];
+		let noteTagMatch = noteTagRegex.exec(text) as any;
+		if (noteTagMatch) {
+			text = text.substring(0, noteTagMatch.indices[0][0]);
+		}
+		let errorTagMatch = errorTagRegex.exec(text) as any;
+		if (errorTagMatch) {
+			text = text.substring(0, errorTagMatch.indices[0][0]);
+		}
+		let note = text;
 
 		const index = notes.push(note) - 1;
 		lines.push(l);
 		levels.push(level);
 
 		// find duplicates
-		if (note.endsWith(":")) { // relations get added to discard list if duplicated
-			let parent = index - 1; // index of parent note; -1 if note is level 0
+		let lower = note.toLowerCase();
+		if (note.endsWith(":")) { // relations get added to warning list if duplicated
+			let parentIndex = index - 1; // index of parent note; -1 if the note has no parent
 			if (level == 0) {
-				parent = -1;
+				parentIndex = -1;
 			} else {
-				while (parent >= 0) {
-					if (levels[parent] < level) {
+				while (parentIndex >= -1) {
+					if (levels[parentIndex] < level) {
 						break;
 					} else {
-						parent--;
+						parentIndex--;
 					}
 				}
-				if (parent < 0) parent = -1;
 			}
 
-			const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === note && entry.parent === parent);
+			const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === lower && entry.parentIndex === parentIndex);
 			if (uniqueIndex == -1) {
 				uniqueNotes.push({
-					content: note, 
+					content: lower, 
 					indices: [index], 
 					levels: [level], 
-					parent: parent,  
+					parentIndex: parentIndex,  
 					ref: index,
 				});
 			} else {
@@ -322,39 +342,64 @@ function processDocument(doc: Editor): noteLibrary {
 			}
 		} else { // key words link to the lowest level instance
 			// console.log("duplicate key word:", note);
-			const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === note);
+			const uniqueIndex = uniqueNotes.findIndex((entry) => entry.content === lower);
 		
-			if (uniqueIndex == -1) {
+			if (uniqueIndex == -1) { // no matching notes
 				// console.log("unique note:", note);
 				uniqueNotes.push({
-					content: note, 
+					content: lower, 
 					indices: [index], 
 					levels: [level], 
-					parent: null,  
+					parentIndex: null,  
 					ref: index,
 				});
-			} else {
+			} else { // matching notes
 				const uniqueEntry = uniqueNotes[uniqueIndex];
 				// console.log("existing note:", note);
 				uniqueNotes[uniqueIndex].indices.push(index);
 				uniqueNotes[uniqueIndex].levels.push(level);
 
-				if (levels[uniqueEntry.ref] > level) {
+				if (levels[uniqueEntry.ref] < level) { // link to lowest level
 					uniqueNotes[uniqueIndex].ref = index;
 				}
 			}
 		}
 	}
-	// console.log("updateNotes() unique notes:", uniqueNotes);
+	// console.log("processNotes(): duplicate notes", uniqueNotes.filter((group) => group.indices.length > 1));
 
 	// push duplicate warnings to warnings
 	for (let group of uniqueNotes) {
 		if (group.indices.length == 1) {
 			continue;
 		}
+
+		// find link conflicts
+		let parents: number[] = [];
+		for (let i = 0; i < group.indices.length; i++) {
+			const index = group.indices[i];
+			const level = group.levels[i];
+			if (levels[index + 1] > level) {
+				parents.push(index);
+				group.ref = index;
+				// console.log(`key word ${group.content} level ${level} has child of level ${levels[index + 1]}`)
+			}
+		}
+
 		for (let i of group.indices) {
-			warningLines.push(lines[i]);
-			warnings.push(group.content.endsWith(":") ? Warning.DuplicateRelation : Warning.DuplicateKeyWord);
+			const end = group.content.slice(-1);
+			switch (end) {
+				case ':': // relations
+					warningLines.push(lines[i]);
+					warnings.push(Warning.DuplicateRelation);
+					break;
+				case '*': // unlinked key word
+					break;
+				default: // key word with conflicts
+					if (parents.contains(i) && parents.length > 1) {
+						warningLines.push(lines[i]);
+						warnings.push(Warning.LinkConflict);
+					}
+			}
 		}
 	}
 
@@ -362,15 +407,20 @@ function processDocument(doc: Editor): noteLibrary {
 }
 
 function proofreadNotes(editor: Editor, library: noteLibrary) {
-	const doc = editor.getDoc();
-	for (let i = 0; i < library.warningLines.length; i++) {
-		const lineNumber = library.warningLines[i]
-		const warning = library.warnings[i];
-		const text = editor.getLine(lineNumber);
-		if (text.match(errorTagPattern)) {
-			continue;
-		}
+	dismissWarnings(editor);
 
+	new Notice(`${library.warningLines.length} error(s) found.`);
+
+	const mapTagMatch = editor.getDoc().getLine(1).match(mapTagRegex);
+	const crosslink = mapTagMatch ? parseMapTag(mapTagMatch[1]).crosslink : true;
+
+	for (let i = 0; i < library.warningLines.length; i++) {
+		const warning = library.warnings[i];
+		// ignore duplicate key word warnings if crosslink is disabled
+		if (!crosslink && (warning == Warning.DuplicateKeyWord || warning == Warning.LinkConflict)) continue;
+
+		const lineNumber = library.warningLines[i]
+		const text = editor.getLine(lineNumber);
 		editor.replaceRange(
 			`${errorTagOpen}${warning}${errorTagClose}`, 
 			{ line: lineNumber, ch: text.length }
@@ -378,14 +428,36 @@ function proofreadNotes(editor: Editor, library: noteLibrary) {
 	}
 }
 
+export function dismissWarnings(editor: Editor) {
+	const doc = editor.getDoc();
+	const lineCount = doc.lineCount();
+	const errorTagRegex = RegExp(errorPattern, 'd')
+	for (let l = lineCount - 1; l >= 0; l--) {
+		const line = doc.getLine(l);
+		const match = errorTagRegex.exec(line);
+
+		if (!match) continue;
+
+		const indices: number[][] = (match as any).indices;
+		const start = indices[1][0];
+		const end = indices[1][2];
+
+		editor.replaceRange("", 
+			{ line: l, ch: start },
+			{ line: l, ch: end }
+		);
+	}
+
+	// console.log("dismissWarnings(): Dismissed all warnings");
+}
+
 export function updateNotes(editor: Editor, proofread: boolean, linkSimilar: boolean, title: string) {
 	const doc = editor.getDoc();
 	const library = processDocument(doc);
-	if (library.warningLines.length != 0) {
-		new Notice("Unresolved errors - fix notes");
-		return;
-	} else if (proofread) {
+	if (proofread && library.warningLines.length != 0) {
+		new Notice("Unresolved warnings - fix notes");
 		proofreadNotes(editor, library);
+		return;
 	}
 
 	// recursively iterates through list to generate a list of paths
@@ -406,19 +478,21 @@ export function updateNotes(editor: Editor, proofread: boolean, linkSimilar: boo
 
 		// set the id
 		let id = null;
-		// if link similar is enabled, find the id of the reference note
 		if (type.keyWord) { // key words all link to the reference (if linking is enabled)
-			if (linkSimilar) {
-				const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note);
+			const independent = note.endsWith('*');
+			if (linkSimilar && !independent) { // if link similar is enabled, find the id of the reference note
+				const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note.toLowerCase());
 				if (uniqueEntry!.indices.length > 1) {
 					const ref = uniqueEntry!.ref;
+					console.log("path:", path, "ref:", paths[ref], independent);
 					id = toPathString(paths[ref]);
 				}
 			}
 		} else { // relations always link to identical siblings
-			const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note && entry.indices.contains(i));
+			const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note.toLowerCase() && entry.indices.contains(i));
 			if (uniqueEntry!.indices.length > 1) {
 				const ref = uniqueEntry!.ref;
+				console.log("path:", path, "ref: ", paths[ref]);
 				id = toPathString(paths[ref]);
 			}
 		}
@@ -502,39 +576,27 @@ export function isMindMap(editor: Editor): string { // returns map title if map 
 	const lineCount = editor.lineCount();
 
 	let title = "";
-	let line = "";
-	for (let l = 0; l < lineCount; l++) {
-		line = editor.getLine(l);
-		const match = /^# (.*)$/m.exec(line);
-		if (match) {
-			title = match[1];
-			break;
-		}
+	const titleMatch = /^# (.*)$/m.exec(editor.getLine(0));
+	if (titleMatch) {
+		title = titleMatch[1];
 	}
 	if (title === "") { 
 		console.log("isMindMap(): title not found");
 		return "";
 	}
-	let hasTag = false;
-	for (let l = 0; l < lineCount; l++) {
-		line = editor.getLine(l);
-		const match = mapTagRegex.exec(line);
-		if (match) {
-			hasTag = true;
-			break;
-		}
-	}
-	if (hasTag) {
-		console.log("isMindMap(): found mind map. title:", title);
+
+	const tagMatch = mapTagRegex.exec(editor.getLine(1));
+	if (tagMatch) {
+		console.log("isMindMap(): mind map identified" + title);
 		return title;
 	} else {
-		console.log("isMindMap(): map tag not found");
+		console.log("isMindMap(): tag not found");
 		return "";
 	}
 }
 
 export function addMindMapTag(editor: Editor) {
-	const tag = `${mapTagOpen}false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621${mapTagClose}`;
+	const tag = `${mapTagOpen}false;true;false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621${mapTagClose}`;
 	const cursor = editor.getCursor();
 	const from = {
 		line: cursor.line, 

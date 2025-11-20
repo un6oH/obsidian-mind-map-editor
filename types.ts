@@ -3,7 +3,13 @@ import { FSRSParameters, Card } from "ts-fsrs";
 export interface MapProperties {
   title: string; 
   id: string;
-  studySettings: FSRSParameters; 
+  settings: MapSettings;
+}
+
+export interface MapSettings {
+  separateHeadings: boolean;
+  crosslink: boolean;
+  studySettings: FSRSParameters;
 }
 
 export interface NoteProperties {
@@ -36,5 +42,5 @@ export interface MindMapLayout {
 }
 
 export enum Warning {
-  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, 
+  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, LinkConflict
 }

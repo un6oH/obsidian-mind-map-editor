@@ -1,39 +1,46 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card } from "ts-fsrs";
-import { MapProperties, NoteProperties, Note, MindMap } from "types";
+import { MapProperties, NoteProperties, Note, MindMap, MapSettings } from "types";
 
 export const noteTagOpen = "%%note";
 export const noteTagClose = "%%";
-export const notePattern = `(?<list>[0-9]+\.|-)(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
-export const noteRegex = RegExp(notePattern, 'm');
+export const notePattern = `(?<list>[0-9]+\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
+export const noteRegex = RegExp(notePattern, 'md');
 
 export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
-export const noteTagRegex = RegExp(noteTagPattern, 'm');
+export const noteTagRegex = RegExp(noteTagPattern, 'md');
 
 export const mapTagOpen = "%%map";
 export const mapTagClose = "%%";
 export const mapTagPattern = `${mapTagOpen}(.*?)${mapTagClose}`;
-export const mapTagRegex = RegExp(mapTagPattern, 'm');
+export const mapTagRegex = RegExp(mapTagPattern, 'md');
 
 export const pastedImagePattern = "\!\[\[Pasted image (.*?)\.png\]\]";
-export const pastedImageRegex = RegExp(pastedImagePattern, 'm');
+export const pastedImageRegex = RegExp(pastedImagePattern, 'md');
 
 export const errorTagOpen = "%%error";
 export const errorTagClose = "%%";
-export const errorTagPattern = `^.*(?<tag>${errorTagOpen}(?<type>\\d*)${errorTagClose})$`
+export const errorTagPattern = `${errorTagOpen}(?<type>\\d*)${errorTagClose}`;
+export const errorTagRegex = RegExp(errorTagPattern, 'md');
+export const errorPattern = `^.*(?<tag>${errorTagOpen}(?<type>\\d*)${errorTagClose})$`
+export const errorRegex = RegExp(errorPattern, 'md');
 
 export function parseMindMap(text: string): MindMap | null {
 	const mindMap: MindMap = {
 		map: {
 			title: "title", 
       id: "", 
-			studySettings: generatorParameters()
+			settings: { 
+				separateHeadings: false, 
+				crosslink: true, 
+				studySettings: generatorParameters(), 
+			}, 
 		}, 
 		notes: []
 	};
 
 	// title
-	const titlePattern = new RegExp("# (.*?)$", 'm');
-	let titleMatch = titlePattern.exec(text);
+	const titleRegex = new RegExp("# (.*?)$", 'm');
+	let titleMatch = titleRegex.exec(text);
   // console.log(titleMatch);
 	if (!titleMatch) {
 		console.log("Mind map title not found");
@@ -44,14 +51,14 @@ export function parseMindMap(text: string): MindMap | null {
 	}
 
 	// map settings
-	const mapPattern = new RegExp(mapTagPattern, 'gm');
-	let mapMatch = mapPattern.exec(text);
+	const mapTagRegex = new RegExp(mapTagPattern, 'gm');
+	let mapMatch = mapTagRegex.exec(text);
 	if (!mapMatch) {
 		console.log("Study parameters not found");
 		return null;
 	} else {
-		const params = parseStudyParameters(mapMatch[0]);
-		mindMap.map.studySettings = params;
+		const settings = parseMapTag(mapMatch[0]);
+		mindMap.map.settings = settings;
 	}
 
 	// note patterns
@@ -88,27 +95,29 @@ export function createBlankNote(): Note {
   }
 }
 
-// parses <map></map> tag
-export function parseStudyParameters(string: string): FSRSParameters {
-	const contents = string.slice(5, -6);
-	const parameters = string.trim().split(';');
+// parses map tag (contents only)
+export function parseMapTag(string: string): MapSettings {
+	const data = string.slice(mapTagOpen.length, string.length - mapTagClose.length)
+	const parameters = data.trim().split(';');
 	const props: Partial<FSRSParameters> = {
-		enable_fuzz: parameters[0] !== "" ? parameters[0] === "true" : undefined, 
-		enable_short_term: parameters[1] !== "" ? parameters[1] === "true" : undefined, 
-		maximum_interval: parameters[2] !== "" ? parseFloat(parameters[2]) : undefined, 
-		request_retention: parameters[3] !== "" ? parseFloat(parameters[3]) : undefined, 
-		w: parameters[4] !== "" ? parseNumberArray(parameters[4]) : undefined, 
+		enable_fuzz: parameters[2] !== "" ? parameters[2] === "true" : undefined, 
+		enable_short_term: parameters[3] !== "" ? parameters[3] === "true" : undefined, 
+		maximum_interval: parameters[4] !== "" ? parseFloat(parameters[4]) : undefined, 
+		request_retention: parameters[5] !== "" ? parseFloat(parameters[5]) : undefined, 
+		w: parameters[6] !== "" ? parseNumberArray(parameters[6]) : undefined, 
 	};
-	return generatorParameters(props);
+	return { 
+		separateHeadings: parameters[0] !== "" ? parameters[0] === "true" : false, 
+		crosslink: parameters[1] !== "" ? parameters[1] === "true" : true,
+		studySettings: generatorParameters(props),
+	};
 }
 
 // parse note entry
 // any line starting with "- "
 // return note with assigned properties
-export function parseNote(str: string): Note | null {
-	const string = str.trim();
-  // const noteRegex = new RegExp(notePattern, 'd');
-	const match = noteRegex.exec(string);
+export function parseNote(str: string): Note | null {;
+	const match = noteRegex.exec(str);
 	// console.log("propsTag:", propsTag ? propsTag : noteDataRegex.exec(string));
 	if (!match) {
 		return null;
@@ -117,7 +126,7 @@ export function parseNote(str: string): Note | null {
 	const note = createBlankNote(); 
 	
 	// extract the content string from the line
-	const content = match[2];
+	const content = match[2].trim();
 	note.content = content ? content : "blank note";
 
 	// parse the props string
@@ -247,16 +256,17 @@ export function createNoteTag(props: NoteProperties, includeTags: boolean): stri
 }
 
 // creates map tag
-export function createMapTag(params: FSRSParameters, includeTags = true): string {
-	let string = "";
-	const propStrings = [
-		params.enable_fuzz.toString(), 
-		params.enable_short_term.toString(), 
-		params.maximum_interval.toString(),
-		params.request_retention.toString(), 
-		params.w.join(','), 
-	]
-	propStrings.forEach(str => string += str + ';');
+export function createMapTag(settings: MapSettings, includeTags = true): string {
+	const propStrings: string[] = [
+		settings.separateHeadings.toString(), 
+		settings.crosslink.toString(), 
+		settings.studySettings.enable_fuzz.toString(), 
+		settings.studySettings.enable_short_term.toString(), 
+		settings.studySettings.maximum_interval.toString(),
+		settings.studySettings.request_retention.toString(), 
+		settings.studySettings.w.join(','), 
+	];
+	let string = propStrings.join(';') 
 
 	if (includeTags)
 		string = mapTagOpen + string + mapTagClose;

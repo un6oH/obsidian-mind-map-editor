@@ -6,6 +6,7 @@ import * as d3 from 'd3';
 export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.001;
 const DEFAULT_ALPHADECAY = 0.2; // 1 - Math.pow(0.001, 1 / 30)
+const DRAG_ALPHA = 1;
 
 export interface Node extends d3.SimulationNodeDatum {
   id: string;
@@ -129,19 +130,22 @@ export class MindMapView extends ItemView {
     this.links = [];
 
     // add central node (title)
-    const centreNode: Node = {
-      id: this.mindMap.map.id, 
-      content: this.mindMap.map.title, 
-      level: 0,
-      study: false, 
-      centre: true, 
-      x: 0, 
-      y: 0, 
-      fx: 0, 
-      fy: 0, 
+    let centreNode: Node;
+    if (!mindMap.map.settings.separateHeadings) {
+      centreNode = {
+        id: this.mindMap.map.id, 
+        content: this.mindMap.map.title, 
+        level: 0,
+        study: false, 
+        centre: true, 
+        x: 0, 
+        y: 0, 
+        fx: 0, 
+        fy: 0, 
+      }
+      this.nodes.push(centreNode);
+      // console.log("map:", this.mindMap.map.id);
     }
-    this.nodes.push(centreNode);
-    // console.log("map:", this.mindMap.map.id);
 
     // preprocessing step:
     // find chain nodes
@@ -177,20 +181,20 @@ export class MindMapView extends ItemView {
     const nodeIDs: string[] = [];
     for (let note of this.mindMap.notes) {
       let id = toPathString(note.props.path);
-      if (note.props.id) {
+      if (note.props.id && mindMap.map.settings.crosslink) { // note has predetermined node id AND crosslinking enabled
         id = note.props.id;
       }
 
       if (!nodeIDs.contains(id)) { // only add unique nodes
-        let level = note.props.path.length - 1;
+        let level = note.props.path.length; // study depth of the node
         let pathBuffer = note.props.path.slice(0, level);
         // console.log(toPathString(pathBuffer), "level:", level);
         while (pathBuffer.length > 0) {
           let targetId = toPathString(pathBuffer);
           let target = mindMap.notes.find((note) => toPathString(note.props.path) === targetId);
-          if (!target?.props.study) {
+          if (!target?.props.study) { // note is not studyable
             // console.log(`note not studyable id: ${targetId}`);
-            level--;
+            level--; // decrement study level
           }
           pathBuffer.pop();
         }
@@ -198,7 +202,6 @@ export class MindMapView extends ItemView {
         const node: Node = {
           id: id, 
           content: note.content, 
-          // level: note.props.path.length - 1, 
           level: level, 
           study: note.props.study, 
           centre: false, 
@@ -214,21 +217,28 @@ export class MindMapView extends ItemView {
         nodeIDs.push(id);
       }
 
+      // no links
+      if (mindMap.map.settings.separateHeadings && note.props.path.length == 1) continue;
+
+      // link
       let listIndex = note.props.listIndex;
-      let parent = toPathString(note.props.path.slice(0, -1))
-      if (note.props.listIndex > 1) {
+      let parent = note.props.path.length == 1 ? centreNode!.id : toPathString(note.props.path.slice(0, -1));
+      if (listIndex > 1) { // node in a chain
         let chainIndex = chains.findIndex((group) => group.parent === parent);
         this.links.push({
           source: chains[chainIndex].nodes[listIndex - 2], // issue 2025-08-30a
           target: id
         });
-      } else {
+      } else { // nodes not in a chain
         this.links.push({
           source: parent, // issue 2025-08-30a
           target: id
         });
       }
     }
+
+    // console.log(this.nodes);
+    // console.log(this.links);
 
     // new StudySettingsModal(this.app, this.mindMap.map.title, (mode: string) => console.log("Mode:", mode));
     this.createGraph();
@@ -247,15 +257,8 @@ export class MindMapView extends ItemView {
       .alpha(presetLayout ? 0.25 : 1)
       .alphaDecay(presetLayout ? DEFAULT_ALPHADECAY : 0.02)
       .on('tick', () => this.updateGraph());
-
+      
     this.graphContainer.empty();
-
-    const color = d3.scaleOrdinal(d3.schemeCategory10);
-
-    // The force simulation mutates links and nodes, so create a copy
-    // so that re-evaluating this cell produces the same result.
-    const links = this.links.map(d => ({...d}));
-    const nodes = this.nodes.map(d => ({...d}));
 
     // this.resize();
     // console.log("container size", this.graphContainer.clientWidth, this.graphContainer.clientHeight);
@@ -292,7 +295,7 @@ export class MindMapView extends ItemView {
       .call(d3.drag<SVGCircleElement, Node>()
           .on('start', (event, d) => {
               if (d.centre) return;
-              if (!event.active) this.simulation.alphaTarget(0.5).restart();
+              if (!event.active) this.simulation.alphaTarget(DRAG_ALPHA).restart();
               d.fx = d.x ? d.x : null;
               d.fy = d.y ? d.y : null;
           })
@@ -319,52 +322,6 @@ export class MindMapView extends ItemView {
   }
 
   updateGraph() {
-    /* DYNAMIC UPDATING (BREAKS VIEW TRANFORMATIONS)
-    // Update links
-    // this.link = this.link.data(this.links, (d: Link) => `${d.source}-${d.target}`);
-    // this.link.exit().remove();
-    // this.link = this.link.enter().append('line')
-    //   .attr('stroke', '#999')
-    //   .attr('stroke-width', 2)
-    //   .merge(this.link);
-
-    // Update nodes
-    // this.node = this.node.data(this.nodes, (d: Node) => d.id);
-    // this.node.exit().remove();
-    // this.node = this.node.enter().append('circle')
-    //   .attr('nodeId', d => d.id)
-    //   .attr("stroke", "#fff")
-    //   .attr("stroke-width", 1)
-    //   .attr('r', d => 5)
-    //   .attr('fill', d => colour(d.level))
-    //   .call(d3.drag<SVGCircleElement, Node>()
-    //       .on('start', (event, d) => {
-    //           if (!event.active) this.simulation.alphaTarget(0.3).restart();
-    //           d.fx = d.x;
-    //           d.fy = d.y;
-    //       })
-    //       .on('drag', (event, d) => {
-    //           d.fx = event.x;
-    //           d.fy = event.y;
-    //       })
-    //       .on('end', (event, d) => {
-    //           if (!event.active) this.simulation.alphaTarget(0);
-    //           d.fx = null;
-    //           d.fy = null;
-    //       })
-    //   )
-    //   .merge(this.node);
-
-    // this.label = this.label.data(this.nodes, (d: Node) => d.id);
-    // this.label.exit().remove();
-    // this.label = this.label.enter().append("text")
-    //   .text(d => d.content)
-    //   .attr("text-anchor", "middle")
-    //   .attr("dominant-baseline", "central")
-    //   .attr("pointer-events", "none")
-    //   .merge(this.label);
-    */
-
     // Update positions on each tick
     this.simulation.nodes(this.nodes);
     (this.simulation.force('link') as d3.ForceLink<Node, Link>).links(this.links);
