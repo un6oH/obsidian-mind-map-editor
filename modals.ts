@@ -107,7 +107,7 @@ export class UpdateNotesModal extends Modal {
 
 		this.setTitle("Update notes");
 
-		let proofread = false;
+		let proofread = true;
 		const settings = parseMapTag(editor.getLine(1));
 
 		new Setting(this.contentEl)
@@ -287,7 +287,7 @@ export class NotePropertyEditorModal extends Modal {
 
 		// settings
 		new Setting(this.contentEl)
-			.setName("Text:")
+			.setName("Text")
 			.addText((text) => 
 				text.setValue(this.note.content.trim()).onChange((value) => {
 					this.note.content = value.trim();
@@ -414,7 +414,7 @@ export class NotePropertyEditorModal extends Modal {
 			changes: {
 				from: indices[2][0], 
 				to: indices[2][1], 
-				insert: " " + this.note.content.trim() + " ", 
+				insert: this.note.content.trim(), 
 			}
 		});
 

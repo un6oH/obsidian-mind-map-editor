@@ -160,7 +160,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
 
-	onunload() {
+	async onunload() {
 
 	}
 
@@ -219,11 +219,11 @@ export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: 
 	}
 
 	// "Reveal" the leaf in case it is in a collapsed sidebar
-	workspace.revealLeaf(leaf);
-
-	this.mindMapView = leaf.view as MindMapView;
-
-	this.mindMapView.createMindMap(mindMap, layout, () => saveProgress(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
+	await workspace.revealLeaf(leaf)
+		.then(() => {
+			this.mindMapView = leaf.view as MindMapView;
+			this.mindMapView.initialiseMindMap(mindMap, layout, () => saveProgress(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
+		});
 }
 
 // stores content, index, and level of every instance of the same content
@@ -286,7 +286,7 @@ function processDocument(doc: Editor): noteLibrary {
 		}
 
 		if (match[3].trim() === "") {
-			console.log(`processDocument() empty line: ${l}`);
+			// console.log(`processDocument() empty line: ${l}`);
 			warningLines.push(l);
 			warnings.push(Warning.EmptyLine);
 			continue;
@@ -305,7 +305,7 @@ function processDocument(doc: Editor): noteLibrary {
 		if (errorTagMatch) {
 			text = text.substring(0, errorTagMatch.indices[0][0]);
 		}
-		let note = text;
+		let note = text.trim();
 
 		const index = notes.push(note) - 1;
 		lines.push(l);
@@ -492,7 +492,7 @@ export function updateNotes(editor: Editor, proofread: boolean, linkSimilar: boo
 			const uniqueEntry = library.uniqueNotes.find(entry => entry.content === note.toLowerCase() && entry.indices.contains(i));
 			if (uniqueEntry!.indices.length > 1) {
 				const ref = uniqueEntry!.ref;
-				console.log("path:", path, "ref: ", paths[ref]);
+				// console.log("path:", path, "ref: ", paths[ref]);
 				id = toPathString(paths[ref]);
 			}
 		}
@@ -587,7 +587,7 @@ export function isMindMap(editor: Editor): string { // returns map title if map 
 
 	const tagMatch = mapTagRegex.exec(editor.getLine(1));
 	if (tagMatch) {
-		console.log("isMindMap(): mind map identified" + title);
+		console.log("isMindMap(): mind map identified", title);
 		return title;
 	} else {
 		console.log("isMindMap(): tag not found");

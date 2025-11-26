@@ -1,4 +1,4 @@
-import { FSRSParameters, Card } from "ts-fsrs";
+import { FSRSParameters, Card, generatorParameters } from "ts-fsrs";
 
 export interface MapProperties {
   title: string; 
@@ -28,6 +28,20 @@ export interface Note {
 export interface MindMap {
   map: MapProperties; 
   notes: Note[]; 
+}
+export function createMindMap(): MindMap {
+  return {
+    map: {
+      title: "", 
+      id: "", 
+      settings: {
+        separateHeadings: false, 
+        crosslink: true, 
+        studySettings: generatorParameters()
+      }
+    },
+    notes: []
+  }
 }
 
 export interface Settings {
