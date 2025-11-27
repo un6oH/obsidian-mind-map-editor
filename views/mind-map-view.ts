@@ -1,4 +1,4 @@
-import { App, ItemView, Modal, SliderComponent, WorkspaceLeaf } from 'obsidian';
+import { App, ItemView, Modal, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
 import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap } from 'types';
 import { toPathString } from 'helpers';
 import * as d3 from 'd3';
@@ -8,7 +8,9 @@ export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.005;
 const DEFAULT_ALPHADECAY = 0.30; // 1 - Math.pow(0.005, 1 / 30)
 const INITIAL_ALPHA = 1;
-const DRAG_ALPHA = 1;
+const INITIAL_ALPHADECAY = 0.16
+const DRAG_ALPHA = 0.5;
+const DRAG_ALPHADECAY = 0.30;
 
 interface Node extends d3.SimulationNodeDatum {
   id: string;
@@ -35,6 +37,11 @@ interface NodeCard extends Card {
   target: string;
   depth: number;
 }
+
+enum ViewMode {
+  Navigate, 
+  Arrange,
+};
 
 const levelColour = [
   'red', 
@@ -81,6 +88,11 @@ export class MindMapView extends ItemView {
 
   settingsContainer: Element;
   studyButton: Element;
+  studyButtonHandler: () => void;
+
+  viewModeButton: Element;
+  viewMode = ViewMode.Navigate;
+  viewModeButtonHandler: () => void;
 
   layout: MindMapLayout;
   saveProgressCallback: () => void;
@@ -88,10 +100,6 @@ export class MindMapView extends ItemView {
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
-    this.mindMap = createMindMap()
-    this.nodes = [];
-    this.links = [];
-    this.cards = [];
   }
 
   getViewType() {
@@ -103,44 +111,54 @@ export class MindMapView extends ItemView {
   }
 
   async onOpen() {
-    const app = this.app;
+    this.mindMap = createMindMap()
+    this.nodes = [];
+    this.links = [];
+    this.cards = [];
+    
+    this.graphContainer = document.createElement('div');
+    this.graphContainer.addClass('mind-map-view-graph-container');
+    this.settingsContainer = document.createElement('div');
+    this.settingsContainer.addClass('mind-map-view-settings-container');
+
+    this.studyButton = document.createElement('button');
+    this.studyButton.textContent = "Study";
+    this.studyButtonHandler = () => this.generateSchedule();
+    this.studyButton.addEventListener('click', this.studyButtonHandler);
+
+    this.viewModeButton = document.createElement('button');
+    this.viewModeButton.textContent = "Mode: Navigate";
+    this.viewModeButtonHandler = () => this.changeViewMode();
+    this.viewModeButton.addEventListener('click', this.viewModeButtonHandler);
+
     const container = this.containerEl.children[1];
     container.addClass('mind-map-view-container');
     container.empty();
-    this.graphContainer = container.createEl('div');
-    this.graphContainer.addClass('mind-map-view-graph-container');
-    this.settingsContainer = container.createEl('div');
-    this.settingsContainer.addClass('mind-map-view-settings-container');
-    // this.studyButton = this.settingsContainer.createEl('button')
-    // this.studyButton.textContent = "Start studying";
-    
+    container.appendChild(this.graphContainer);
+    container.appendChild(this.settingsContainer);
+
     const header = this.containerEl.querySelector(".view-header") as HTMLElement | null;
     if (header) {
-      // There is usually a container for actions; try common possibilities
       const actionsContainer =
         header.querySelector(".view-actions") ||
         header.querySelector(".view-header-actions") ||
         header;
-
-      const button = document.createElement('button');
-      button.textContent = "Study";
-      actionsContainer.appendChild(button);
-      this.studyButton = button;
+      actionsContainer.appendChild(this.studyButton);
+      actionsContainer.appendChild(this.viewModeButton);
     }
   }
 
   async onClose() {
     // Nothing to clean up.
-    // this.graphContainer.removeEventListener('resize', this.resize);
-    if (this.studyButton) {
-      this.studyButton.removeEventListener("click", this.generateSchedule);
-      // Remove element from DOM
-      this.studyButton.remove();
-    }
+    this.graphContainer.removeEventListener('resize', this.resize);
+    this.studyButton.removeEventListener("click", this.studyButtonHandler);
+    this.studyButton.remove();
+    this.viewModeButton.removeEventListener('click', this.viewModeButtonHandler);
+    this.viewModeButton.remove();
   }
 
   onResize() {
-    console.log();
+    this.resize();
   }
 
   initialiseMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
@@ -291,7 +309,7 @@ export class MindMapView extends ItemView {
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
       .force('charge', d3.forceManyBody().strength(-100).theta(0.9).distanceMax(100))
       .alpha(presetLayout ? 0 : INITIAL_ALPHA)
-      .alphaDecay(DEFAULT_ALPHADECAY)
+      .alphaDecay(INITIAL_ALPHADECAY)
       .alphaMin(MIN_ALPHA)
       .on('tick', () => this.updateGraph());
       
@@ -335,6 +353,8 @@ export class MindMapView extends ItemView {
         .attr("stroke-width", 1)
       .on('click', (event, d) => {
         event.stopPropagation();
+        if (this.viewMode == ViewMode.Arrange) return;
+        // event.stopPropagation();
         if (d.centre) {
           this.focusNodes();
           return;
@@ -343,15 +363,15 @@ export class MindMapView extends ItemView {
         this.focusNodes(d.id);
       })
       .call(d3.drag<SVGCircleElement, Node>()
-          // .on('start', (event, d) => {
-          //     if (d.centre) return;
-          //     if (!event.active) this.simulation.alphaTarget(DRAG_ALPHA).restart();
-          //     d.fx = d.x ? d.x : null;
-          //     d.fy = d.y ? d.y : null;
-          // })
+          .on('start', (event, d) => {
+              if (this.viewMode == ViewMode.Navigate) return;
+              if (d.centre) return;
+              if (!event.active) this.simulation.alphaTarget(DRAG_ALPHA).alphaDecay(DRAG_ALPHADECAY).restart();
+              d.fx = d.x ? d.x : null;
+              d.fy = d.y ? d.y : null;
+          })
           .on('drag', (event, d) => {
               if (d.centre) return;
-              if (!event.active) this.simulation.alphaTarget(DRAG_ALPHA).restart();
               d.fx = event.x;
               d.fy = event.y;
           })
@@ -395,7 +415,6 @@ export class MindMapView extends ItemView {
     
     let alpha = this.simulation.alpha();
     if (alpha <= MIN_ALPHA) {
-      this.simulation.alphaDecay(DEFAULT_ALPHADECAY);
       console.log("MindMapView.updateGraph(): graph settled in", this.stepsToAnneal, "steps");
       this.stepsToAnneal = 0;
       this.saveLayout();
@@ -434,6 +453,7 @@ export class MindMapView extends ItemView {
   resize() {
     this.width = this.graphContainer.clientWidth;
     this.height = this.graphContainer.clientHeight;
+    console.log("resize():", this.width, this.height);
     this.svg
       .attr('width', this.width)
       .attr('height', this.height)
@@ -449,8 +469,8 @@ export class MindMapView extends ItemView {
 
   focusNodes(id?: string) {
     const nodes = id ? this.nodes.filter((node) => node.id.startsWith(id)) : this.nodes;
-    
-    console.log("focusNodes() nodes:", nodes.map((node) => node.id));
+    // console.log("focusNodes() group size:", nodes.length);
+
     let minX, maxX, minY, maxY = 0;
     const xCoords = nodes.map((node) => node.x!);
     const yCoords = nodes.map((node) => node.y!);
@@ -458,7 +478,7 @@ export class MindMapView extends ItemView {
     maxX = Math.max(...xCoords);
     minY = Math.min(...yCoords);
     maxY = Math.max(...yCoords);
-    console.log(`frameNodes: corners (${minX}, ${minY}) and (${maxX}, ${maxY})`);
+    // console.log(`frameNodes: corners (${minX}, ${minY}) and (${maxX}, ${maxY})`);
     const frameCentreX = (minX + maxX) * 0.5;
     const frameCentreY = (minY + maxY) * 0.5;
     const frameWidth = maxX - minX + 20;
@@ -474,13 +494,28 @@ export class MindMapView extends ItemView {
     );
   }
 
+  changeViewMode() {
+    let buttonText = "";
+    switch(this.viewMode) {
+      case ViewMode.Arrange: 
+        this.viewMode = ViewMode.Navigate; 
+        buttonText = "Mode: Navigate";
+        break;
+      case ViewMode.Navigate: 
+        this.viewMode = ViewMode.Arrange; 
+        buttonText = "Mode: Arrange";
+        break;
+    }
+
+    this.viewModeButton.textContent = buttonText;
+  }
+
   generateSchedule() {
-    console.log("generateSchedule()", this.mindMap)
     const f: FSRS = fsrs(this.mindMap.map.settings.studySettings);
     let schedulingCards: RecordLog;
     const time = new Date();
     this.cards.forEach((card) => f.repeat(card, time));
-    console.log(f);
+    console.log("generateSchedule()", f);
   }
 }
 
