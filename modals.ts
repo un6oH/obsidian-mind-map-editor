@@ -1,8 +1,8 @@
 import { EditorView } from '@codemirror/view';
-import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal } from 'obsidian';
+import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { FSRSParameters, generatorParameters, State } from 'ts-fsrs';
 import { MapProperties, MapSettings, Note, Warning } from 'types';
-import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose, errorPattern, mapTagOpen, mapTagClose } from 'helpers';
+import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex } from 'helpers';
 import MindMapEditorPlugin, { dismissWarnings, studyNotes, updateMapSettings, updateNotes } from 'main';
 
 export class MindMapCreatorModal extends Modal {
@@ -102,7 +102,7 @@ export class MindMapCreatorModal extends Modal {
 }
 
 export class UpdateNotesModal extends Modal {
-	constructor(app: App, editor: Editor, title: string) {
+	constructor(app: App, editor: Editor) {
 		super(app);
 
 		this.setTitle("Update notes");
@@ -110,18 +110,18 @@ export class UpdateNotesModal extends Modal {
 		let proofread = true;
 		const settings = parseMapTag(editor.getLine(1));
 
-		new Setting(this.contentEl)
-			.setName("Proofread")
-			.addToggle((toggle) => toggle
-				.setValue(proofread)
-				.onChange(value => proofread = value))
-			.addButton((button) => button
-				.setButtonText("Dismiss all warnings")
-				.setCta()
-				.onClick(() => dismissWarnings(editor)));
+		// new Setting(this.contentEl)
+		// 	.setName("Proofread")
+		// 	.addToggle((toggle) => toggle
+		// 		.setValue(proofread)
+		// 		.onChange(value => proofread = value))
+		// 	.addButton((button) => button
+		// 		.setButtonText("Dismiss all warnings")
+		// 		.setCta()
+		// 		.onClick(() => dismissWarnings(editor)));
 
 		new Setting(this.contentEl)
-			.setName(`Crosslink: ${settings.crosslink ? "enabled" : "disabled"}`);
+			.setName(`Crosslink ${settings.crosslink ? "enabled" : "disabled"}`);
 
 		new Setting(this.contentEl)
 			.addButton((button) => button
@@ -132,7 +132,7 @@ export class UpdateNotesModal extends Modal {
 				.setButtonText("Update notes")
 				.setCta()
 				.onClick(() => {
-					updateNotes(editor, proofread, settings.crosslink, title);
+					updateNotes(editor, settings.crosslink);
 					this.close();
 				}));
 	}
@@ -165,14 +165,14 @@ export class StudyNotesModal extends Modal {
 	constructor(app: App, plugin: MindMapEditorPlugin, editor: Editor, title: string) {
 		super(app);
 
-		this.setTitle("Study notes");
+		this.setTitle("Study " + title);
 		
 		new Setting(this.contentEl)
 			.addButton((button) => button
 				.setButtonText("Update")
 				.setCta()
 				.onClick(() => {
-					new UpdateNotesModal(app, editor, title).open();
+					new UpdateNotesModal(app, editor).open();
 				}))
 			.addButton((button) => button
 				.setButtonText("Let's go!")
@@ -260,79 +260,97 @@ export class NotePropertyEditorModal extends Modal {
 	view: EditorView;
 	note: Note;
 
-	constructor(app: App, view: EditorView, indices: number[][]) {
+	constructor(app: App, view: EditorView, noteMatch: RegExpExecArray) {
 		super(app);
 		this.view = view;
 
-		const string = view.state.doc.sliceString(indices[0][0], indices[0][1]);
-		// console.log(indices);
-		// console.log(string);
-		let note = parseNote(string);
-		if (!note) {
-			new Notice("No note found");
-			this.close();
-			return;
-		}
-		this.note = note!;
+		this.note = parseNote(noteMatch);
+		const initialContent = this.note.content;
+		const initialId = this.note.id == null ? "" : this.note.id;
 
 		let title = this.note.content;
+		// console.log(title);
 		if (this.note.content.endsWith(":")) {
-			title = title.substring(0, title.length - 1);
+			title = title.slice(0, -1);
 			title = title + " (Relation)"
 		} else {
 			title = title + " (Key word)";
 		}
-		
 		this.setTitle(title);
-
-		// settings
-		new Setting(this.contentEl)
-			.setName("Text")
-			.addText((text) => 
-				text.setValue(this.note.content.trim()).onChange((value) => {
-					this.note.content = value.trim();
-					this.note.props.path[this.note.props.path.length - 1] = toNoteID(value);
-				}))
-			.setDesc("Warning: changing this note's contents may disconnect linked notes");
 
 		// displays path
 		new Setting(this.contentEl)
-      .setName('Path')
       .setDesc(formatPath(this.note.props.path));
 
-		// opens a suggest modal to select notes
-		const idDescription = document.createDocumentFragment();
-		const idDescriptionSpan = document.createElement('span');
-		idDescriptionSpan.textContent = this.note.props.id ? this.note.props.id.replace(/\\/g, ' > ') : "not linked";
-		idDescription.appendChild(idDescriptionSpan);
+		// settings
+		let contentField: TextComponent;
 		new Setting(this.contentEl)
-			.setName("ID")
+			.setName("Content")
+			.setDesc("Warning: changing content will disconnect children and linked notes")
+			.addText((text) => 
+				contentField = text
+					.setPlaceholder(initialContent)
+					.setValue(this.note.content)
+					.onChange((value) => {
+						this.note.content = value.trim();
+						this.note.props.path.splice(-1, 1, toNoteID(value));
+					}))
 			.addButton((button) => button
-				.setButtonText("Find a note")
+				.setButtonText("Reset")
+				.setCta()
+				.onClick(() => {
+					contentField.setValue(initialContent);
+					this.note.content = initialContent.trim();
+					this.note.props.path.splice(-1, 1, toNoteID(initialContent));
+					// console.log("reset");
+				})
+			)
+
+		let unlinkToggle: ToggleComponent;
+		let idField: TextComponent;
+		new Setting(this.contentEl)
+			.setName("Linking disabled")
+			.setDesc("Ignore tags and prevent crosslinking")
+			.addToggle((toggle) => 
+				unlinkToggle = toggle
+					.setValue(this.note.id === null)
+					.onChange((unlink) => {
+						this.note.id = unlink ? null : initialId;
+						idField.setValue(unlink ? "" : initialId);
+					})
+			);
+
+		new Setting(this.contentEl)
+			.setName('ID')
+			.setDesc("Add a new tag or search existing tags. Letters and numbers only")
+			.addText((text) => 
+				idField = text
+					.setPlaceholder(this.note.id ? this.note.id : "")
+					.setValue(this.note.id ? this.note.id : "")
+					.onChange((value) => {
+						this.note.id = value.replace(/[^a-zA-Z0-9]/, '');
+						unlinkToggle.setValue(false);
+					})
+			)
+			.addButton((button) => button
+				.setButtonText("Clear")
+				.setCta()
+				.onClick(() => {
+					idField.setValue("");
+					this.note.id = null;
+				})
+			)
+			.addButton((button) => button
+				.setButtonText("Search")
 				.setCta()
 				.onClick(() => {
 					new IdSuggestModal(app, view, this.note.content, (id: string) => {
-						this.note.props.id = id;
-						idDescriptionSpan.textContent = id.replace(/\\/g, ' > ');
-						// console.log("id linked to", id);
+						this.note.id = id;
+						idField.setDisabled(false).setValue(id);
+						unlinkToggle.setValue(false);
 					}).open();
-				}))
-			.addButton((button) => button
-				.setButtonText("Unlink")
-				.setCta()
-				.onClick(() => {
-					this.note.props.id = null;
-					idDescriptionSpan.textContent = "not linked";
-					// console.log("id unlinked");
-				}))
-			.setDesc(idDescription);
-
-		// list type and order
-		const index = this.note.props.listIndex ? this.note.props.listIndex.toString() : "unordered"
-		new Setting(this.contentEl)
-			.setName('Index')
-			.addText((text) =>
-				text.setPlaceholder(index).setDisabled(true));
+				})
+			);
 		
 		// toggle to select studyable
 		new Setting(this.contentEl)
@@ -360,21 +378,21 @@ export class NotePropertyEditorModal extends Modal {
 				.addText((text) =>
 					text.setPlaceholder(card.difficulty.toString()).setDisabled(true));
 			new Setting(this.contentEl)
-				.setName('Card elapsed days')
+				.setName('Card elapsed days / scheduled days')
 				.addText((text) =>
-					text.setPlaceholder(card.elapsed_days.toString()).setDisabled(true));
+					text.setPlaceholder(card.elapsed_days.toString() + " / " + card.scheduled_days.toString()).setDisabled(true));
+			// new Setting(this.contentEl)
+			// 	.setName('Card scheduled days')
+			// 	.addText((text) =>
+			// 		text.setPlaceholder(card.scheduled_days.toString()).setDisabled(true));
 			new Setting(this.contentEl)
-				.setName('Card scheduled days')
+				.setName('Card reps/lapses')
 				.addText((text) =>
-					text.setPlaceholder(card.scheduled_days.toString()).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card reps')
-				.addText((text) =>
-					text.setPlaceholder(card.reps.toString()).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card lapses')
-				.addText((text) =>
-					text.setPlaceholder(card.lapses.toString()).setDisabled(true));
+					text.setPlaceholder(card.reps.toString() + " / " + card.lapses.toString()).setDisabled(true));
+			// new Setting(this.contentEl)
+			// 	.setName('Card lapses')
+			// 	.addText((text) =>
+			// 		text.setPlaceholder().setDisabled(true));
 			new Setting(this.contentEl)
 				.setName('Card state')
 				.addText((text) =>
@@ -385,6 +403,7 @@ export class NotePropertyEditorModal extends Modal {
 					text.setPlaceholder(card.last_review ? card.last_review.toString() : "not reviewed yet").setDisabled(true));
 		}
 		
+		const indices = (noteMatch as any).indices;
 		new Setting(this.contentEl)
 			.addButton((btn) => {
 				btn
@@ -410,11 +429,17 @@ export class NotePropertyEditorModal extends Modal {
 	}
 
 	updateData(indices: number[][]) {
+		let content = this.note.content.trim();
+		if (this.note.id === null) {
+			content += "*";
+		} else if (this.note.id) {
+			content += " #" + this.note.id;
+		}
 		const contentEdit = this.view.state.update({
 			changes: {
 				from: indices[2][0], 
 				to: indices[2][1], 
-				insert: this.note.content.trim(), 
+				insert: content + " ", 
 			}
 		});
 
@@ -446,48 +471,50 @@ export class NotePropertyEditorModal extends Modal {
 }
 
 interface ID {
-	content: string, 
-	path: string[]
+	id: string;
+	content: string;
+	path: string[];
 };
 class IdSuggestModal extends SuggestModal<ID> {
 	callback: (id: string) => void;
-	text: string;
 	notes: ID[];
 	defaultQuery: string;
 
 	constructor(app: App, view: EditorView, defaultQuery: string, callback: (id: string) => void) {
 		super(app)
 		this.callback = callback;
-		this.text = view.state.doc.toString();
 		this.notes = [];
 		this.defaultQuery = defaultQuery;
-
-		let noteMatch;
+		
+		const text = view.state.doc.toString();
+		let taggedNoteMatch;
 		// split match into 
-		const noteRegex = RegExp(notePattern, 'gm');
-		while ((noteMatch = noteRegex.exec(this.text)) !== null) {
-			// console.log(noteMatch);
-			const content = noteMatch[1].trim();
-
-			const propStrings = noteMatch[2].split(';');
-			const path = parsePath(propStrings[0]);
-			this.notes.push({ content, path });
+		const taggedNoteRegex = RegExp(`([0-9]+\. |- )(.*?)(#\\w+)\\s*${noteTagOpen}(.*?)${noteTagClose}`, 'g');
+		while ((taggedNoteMatch = taggedNoteRegex.exec(text)) !== null) {
+			let content = taggedNoteMatch[2].trim();
+			let id = taggedNoteMatch[3].slice(1);
+			let path = parsePath(taggedNoteMatch[4].split(';')[0]);
+			this.notes.push({ content, id, path });
 		}
+		console.log(this.notes);
 	}
 
-	getSuggestions(query: string): ID[] | Promise<ID[]> {
+	getSuggestions(query: string): ID[] {
 		let q = query ? query : this.defaultQuery;
 		q = q.toLowerCase();
-		return this.notes.filter((note) => note.content.toLowerCase().includes(q));
+		return this.notes.filter((note) => 
+			note.content.toLowerCase().includes(q) ||
+			note.id.includes(q)
+		);
 	}
 
 	renderSuggestion(note: ID, el: HTMLElement): void {
-		el.createEl('div', { text: note.content });
+		el.createEl('div', { text: note.content + " #" + note.id });
 		el.createEl('small', { text: formatPath(note.path) });
 	}
 
 	onChooseSuggestion(note: ID, evt: MouseEvent | KeyboardEvent): void {
-		this.callback(toPathString(note.path));
+		this.callback(note.id);
 		this.close();
 	}
 }

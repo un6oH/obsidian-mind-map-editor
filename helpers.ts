@@ -4,25 +4,35 @@ import { MapProperties, NoteProperties, Note, MindMap, MapSettings } from "types
 export const noteTagOpen = "%%note";
 export const noteTagClose = "%%";
 export const notePattern = `(?<list>[0-9]+\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
-export const noteRegex = RegExp(notePattern, 'md');
+export const noteRegex = RegExp(notePattern, 'd');
+// [1]: list delimiter
+// [2]: content
+// [3]: props tag
 
 export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
-export const noteTagRegex = RegExp(noteTagPattern, 'md');
+export const noteTagRegex = RegExp(noteTagPattern, 'd');
+
+export const idTagPattern = "#\\w+";
+export const idTagRegex = RegExp(idTagPattern, 'd');
 
 export const mapTagOpen = "%%map";
 export const mapTagClose = "%%";
 export const mapTagPattern = `${mapTagOpen}(.*?)${mapTagClose}`;
-export const mapTagRegex = RegExp(mapTagPattern, 'md');
+export const mapTagRegex = RegExp(mapTagPattern, 'd');
 
 export const pastedImagePattern = "\!\[\[Pasted image (.*?)\.png\]\]";
-export const pastedImageRegex = RegExp(pastedImagePattern, 'md');
+export const pastedImageRegex = RegExp(pastedImagePattern, 'd');
 
 export const errorTagOpen = "%%error";
 export const errorTagClose = "%%";
 export const errorTagPattern = `${errorTagOpen}(?<type>\\d*)${errorTagClose}`;
-export const errorTagRegex = RegExp(errorTagPattern, 'md');
+export const errorTagRegex = RegExp(errorTagPattern, 'd');
+// [1]: type
+
 export const errorPattern = `^.*(?<tag>${errorTagOpen}(?<type>\\d*)${errorTagClose})$`
 export const errorRegex = RegExp(errorPattern, 'md');
+// [1]: tag
+// [2]: type
 
 export function parseMindMap(text: string): MindMap | null {
 	const mindMap: MindMap = {
@@ -65,12 +75,7 @@ export function parseMindMap(text: string): MindMap | null {
 	const noteRegex = new RegExp(notePattern, 'gm');
 	let noteMatch;
 	while ((noteMatch = noteRegex.exec(text)) !== null) {
-		// console.log(noteMatch);
-		const content = noteMatch[2].trim();
-		const propsString = noteMatch[3];
-		const props = parseNoteTag(propsString);
-		props.listIndex = listIndex(noteMatch[1]); // override index
-		mindMap.notes.push({ content, props });
+		mindMap.notes.push(parseNote(noteMatch));
 	}
 
 	// chain notes
@@ -81,16 +86,16 @@ export function parseMindMap(text: string): MindMap | null {
 export function createNoteProperties(study: boolean): NoteProperties {
 	return {
 		path: [], 
-		id: null, 
 		study: study, 
-		listIndex: 0, 
 		card: study ? createEmptyCard(Date.now()) : null, 
 	}
 }
 
 export function createBlankNote(): Note {
   return {
+		listIndex: 0, 
     content: "", 
+		id: null, 
     props: createNoteProperties(false), 
   }
 }
@@ -116,34 +121,52 @@ export function parseMapTag(string: string): MapSettings {
 // parse note entry
 // any line starting with "- "
 // return note with assigned properties
-export function parseNote(str: string): Note | null {;
-	const match = noteRegex.exec(str);
-	// console.log("propsTag:", propsTag ? propsTag : noteDataRegex.exec(string));
-	if (!match) {
-		return null;
-	}
+// must pass in a RegExpExecArray matched with the note pattern
+export function parseNote(match: RegExpExecArray): Note {
+	const note = {} as Note;
 
-	const note = createBlankNote(); 
-	
-	// extract the content string from the line
-	const content = match[2].trim();
-	note.content = content ? content : "blank note";
+	note.listIndex = listIndex(match[1]);
 
+	const { content, id } = getId(match[2]);
+	note.content = content;
+	note.id = id;
+  
 	// parse the props string
-	note.props = parseNoteTag(match[3]);
+	note.props = parseNoteProps(match[3]);
 	return note;
 }
 
+export function getId(content: string): { content: string, id: string | null } {
+	if (content.trim().endsWith('*')) {
+		return {
+			content: content.trim().slice(0, -1), 
+			id: null
+		}
+	}
+	
+	const idTagMatch = idTagRegex.exec(content);
+	if (idTagMatch) {
+		content = content.slice(0, (idTagMatch as any).indices[0][0]);
+		return {
+			content: content.slice(0, (idTagMatch as any).indices[0][0]), 
+			id: idTagMatch[0].slice(1)
+		}
+	} else {
+		return {
+			content: content.trim(), 
+			id: ""
+		}
+	}
+}
+
 // parses contents (<props> group) of note tag
-export function parseNoteTag(str: string): NoteProperties {
+export function parseNoteProps(str: string): NoteProperties {
 	const properties = createNoteProperties(true);
 	const props = str.split(';');
 	
 	properties.path = parsePath(props[0]);
-	properties.id = props[1] ? props[1] : null;
-	properties.listIndex = parseFloat(props[2]);
-	properties.study = props[3] === "true";
-	properties.card = properties.study ? parseCard(props.slice(4)) : null;
+	properties.study = props[1] === "true";
+	properties.card = properties.study ? parseCard(props.slice(2)) : null;
 
 	return properties;
 }
@@ -209,9 +232,9 @@ export function toNoteID(str: string, title: boolean = false): string {
 	// 	return lowercase;
 	// }
 
-	if (lowercase.length > 12) {
+	if (lowercase.length > NOTE_ID_MAX_LENGTH) {
 		let result = "";
-		let interval = (lowercase.length + 0.5) / 12;
+		let interval = (lowercase.length + 0.5) / NOTE_ID_MAX_LENGTH;
 		for (let i = 0; i < lowercase.length; i += interval) {
 			result += lowercase.charAt(i);
 		}
@@ -226,16 +249,17 @@ export function toNoteID(str: string, title: boolean = false): string {
 export function createNoteTag(props: NoteProperties, includeTags: boolean): string {
 	// console.log("createNoteTag(): props:", props);
 	let string = includeTags ? noteTagOpen : "";
-	const propStrings: string[] = [
-		toPathString(props.path), 
-		props.id ? props.id : "", 
-		props.listIndex.toString(),
-		String(props.study), 
-	];
-	propStrings.forEach(str => string += str + ';');
 
-	if (props.study && !props.card) 
-		props.card = createEmptyCard();
+	// basic properties
+	[ 
+		toPathString(props.path),
+		String(props.study), 
+	].forEach(str => string += str + ';');
+
+	// note does not have card, but needs one
+	if (props.study && !props.card) props.card = createEmptyCard();
+
+	// add card properties
 	if (props.card) {
 		const cardPropStrings = [
 			props.card.due.toISOString(), 
@@ -291,4 +315,16 @@ export function parseNumberArray(array: string): number[] {
 export function listIndex(str: string): number {
 	const parse = parseFloat(str);
 	return isNaN(parse) ? 0 : parse;
+}
+
+export function removeTags(text: string): string {
+	let noteTagMatch = noteTagRegex.exec(text) as any;
+	if (noteTagMatch) {
+		text = text.substring(0, noteTagMatch.indices[0][0]);
+	}
+	let errorTagMatch = errorTagRegex.exec(text) as any;
+	if (errorTagMatch) {
+		text = text.substring(0, errorTagMatch.indices[0][0]);
+	}
+	return text.trim();
 }

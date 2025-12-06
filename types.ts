@@ -14,20 +14,20 @@ export interface MapSettings {
 
 export interface NoteProperties {
   path: string[]; // all parents
-  id: string | null; // id of node if linked to another branch. node defaults to path if null
-  listIndex: number; // number in list. 0 if unordered list
   study: boolean; // whether the node can be studied
   card: Card | null; // null if the node is not studyable
 }
 
 export interface Note {
+  listIndex: number; // number in list. 0 if unordered list
   content: string; // full content in markdown
+  id: string | null; // "" if empty, null to force unlink
   props: NoteProperties; 
 }
 
 export interface MindMap {
   map: MapProperties; 
-  notes: Note[]; 
+  notes: Note[];
 }
 export function createMindMap(): MindMap {
   return {
@@ -56,5 +56,5 @@ export interface MindMapLayout {
 }
 
 export enum Warning {
-  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, LinkConflict
+  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, LinkConflict, LinkConflictReference, ContentNotDefined, ContentConflict
 }

@@ -11,7 +11,7 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteTag } from 'helpers';
+import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getId } from 'helpers';
 import { Warning } from 'types';
 
 class MapStudyParametersWidget extends WidgetType {
@@ -45,29 +45,35 @@ class MapStudyParametersWidget extends WidgetType {
 class NoteDataWidget extends WidgetType {
   app: App;
   view: EditorView;
+  noteMatch: RegExpExecArray;
   indices: number[][];
   isKeyWord: boolean;
   isStudyable: boolean;
-  isLinked: boolean;
+  id: string | null;
 
-  constructor(app: App, indices: number[][], isKeyWord: boolean, isStudyable: boolean, isLinked: boolean) {
+  constructor(app: App, noteMatch: RegExpExecArray, indices: number[][]) {
     super();
     this.app = app;
+    this.noteMatch = noteMatch;
     this.indices = indices;
-    this.isKeyWord = isKeyWord;
-    this.isStudyable = isStudyable;
-    this.isLinked = isLinked;
+
+    const { content, id } = getId(noteMatch[2]);
+
+    this.isKeyWord = !content.endsWith(':');
+    const propsString = noteMatch[3];
+    this.isStudyable = propsString.split(';')[1] === 'true';
   }
 
   toDOM(view: EditorView) {
     const button = document.createElement('a');
     button.textContent = this.isKeyWord ? "key word" : "relation";
-    button.textContent += this.isLinked ? " (linked)" : "";
+    if (this.id) button.textContent += ` (linked)`;
+    // if (this.id) button.textContent += ` (${this.id})`;
     button.addClass(this.isKeyWord ? 'widget-note-keyword' : 'widget-note-relation');
     button.addClass(this.isStudyable ? 'widget-note-study' : 'widget-note-nostudy');
     button.onclick = () => {
       // console.log("NoteDataWidget() indices", this.indices);
-      new NotePropertyEditorModal(this.app, view, this.indices).open();
+      new NotePropertyEditorModal(this.app, view, this.noteMatch).open();
     };
     return button;
   }
@@ -82,8 +88,20 @@ const warningNames = [
   "(Invalid format)", 
   "(Duplicate relation)", 
   "(Duplicate key word)", 
-  "(linked key word also has children)"
+  "(other key words referencing this also have children)", 
+  "(this key word references a key word that has children)", 
+  "(tag does not have associated content)", 
+  "(conflicting content associated with this tag)", 
 ];
+
+const warningMessages: string[] = [];
+warningMessages[Warning.EmptyLine] = "Empty line.";
+warningMessages[Warning.Invalid] = "Invalid format.";
+warningMessages[Warning.DuplicateKeyWord] = "";
+warningMessages[Warning.DuplicateRelation] = "";
+warningMessages[Warning.LinkConflict] = "Only one linked note can have children. Consolidate the children under one note or unlink the parents using \"*\" OR tags";
+warningMessages[Warning.ContentConflict] = "Some notes with this tag have different associated content. Make sure all of the notes have the same content (case-insensitive) OR only one of the notes have content.";
+warningMessages[Warning.ContentNotDefined] = "None of the notes with this tag have associated content.";
 
 class ErrorWidget extends WidgetType {
   indices: number[][];
@@ -140,11 +158,11 @@ class ErrorWidget extends WidgetType {
   }
 }
 
+const mapTagOpenLength = mapTagOpen.length;
+const mapTagCloseLength = mapTagClose.length;
+const noteTagOpenLength = noteTagOpen.length;
+const noteTagCloseLength = noteTagClose.length;
 export function createMindMapEditorViewPlugin(plugin: Plugin) {
-  const mapTagOpenLength = mapTagOpen.length;
-  const mapTagCloseLength = mapTagClose.length;
-  const noteTagOpenLength = noteTagOpen.length;
-  const noteTagCloseLength = noteTagClose.length;
 
   return ViewPlugin.fromClass(
     class MindMapEditorViewPlugin implements PluginValue {
@@ -176,18 +194,11 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
             // console.log("View plugin: note match:", noteMatch[0]);
             let indices: number[][] = (noteMatch as any).indices;
             indices = indices.map((pair) => [pair[0] + from, pair[1] + from]);
-            const content = noteMatch[2].trim();
-            const isKeyWord = !content.endsWith(':');
-            const propsString = noteMatch[3];
-            const props = parseNoteTag(propsString);
-            const isStudyable = props.study;
-            const isLinked = props.id != null;
-
-            // widget replaces <{note>...<\/note}>
+            
             const start = indices[3][0] - noteTagOpenLength;
             const end = indices[3][1] + noteTagCloseLength;
             const deco = Decoration.replace({
-              widget: new NoteDataWidget(plugin.app, indices, isKeyWord, isStudyable, isLinked),
+              widget: new NoteDataWidget(plugin.app, noteMatch, indices),
               inclusive: false
             });
             decorations.push({start, end, deco});
