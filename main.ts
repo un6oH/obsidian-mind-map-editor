@@ -2,8 +2,8 @@ import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidi
 import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout, Warning, MapProperties, MapSettings } from 'types';
-import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, listIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getId } from 'helpers';
+import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup } from 'types';
+import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getId, noteRegex, parseNote, createNoteString } from 'helpers';
 import { MindMapCreatorModal, StudyNotesModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
@@ -182,6 +182,14 @@ export function updateMapSettings(editor: Editor, settings: MapSettings) {
 }
 
 export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: Editor) {
+	const doc = editor.getDoc();
+	const library = processDocument(doc);
+	if (library.warningLines.length != 0) {
+		new Notice("Unresolved warnings - fix notes");
+		proofreadNotes(editor, library);
+		return;
+	}
+	
 	const lineCount = editor.lineCount();
 	const from = { line: 0, ch: 0 };
 	const to = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length };
@@ -225,24 +233,13 @@ export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: 
 		});
 }
 
-// stores content, index, and level of every instance of the same content
-// ref stores the index of the lowest level (reference) instance
-interface noteGroup {
-	content: string | undefined; // undefined if there is a conflict
-	id: string; // #<id> or ""
-	indices: number[]; // index in note library
-	levels: number[]; 
-	parentIndex: number | null; // for duplicate relations under the same parent
-	ref: number;
-}
-
 interface noteLibrary {
+	listIndices: number[]; 
 	contents: string[]; // content of notes
 	ids: (string | null)[]; // id of notes
 	lines: number[]; // line number of each note
 	levels: number[]; // indent level of each note
-	// listIndices: number[]; 
-  groups: noteGroup[];
+  groups: NoteGroup[];
 	warningLines: number[]; // list of line numbers
 	warnings: Warning[]; // list of types
 }
@@ -250,12 +247,13 @@ interface noteLibrary {
 function processDocument(doc: Editor): noteLibrary {
 	// note library properties
 	// ensure every valid note is pushed
+	const listIndices: number[] = [];
 	const contents: string[] = [];
 	const ids: (string | null)[] = [];
 	const lines: number[] = [];
 	const levels: number[] = [];
 	// only some notes
-  const groups: noteGroup[] = [];
+  const groups: NoteGroup[] = [];
 	const warningLines: number[] = []; // lines with associated warning
 	const warnings: Warning[] = []; // type of warning
 
@@ -264,7 +262,6 @@ function processDocument(doc: Editor): noteLibrary {
 	// 2: list delimiter; xx. OR -
 	// 3: content
 
-	const getParentIndex = (level: number, index: number) => level == 0 ? -1 : levels.slice(0, index).findLastIndex((l) => l == level - 1);
 	// line-by-line
 	for (let l = 0; l < doc.lineCount(); l++) {
 		const line = doc.getLine(l);
@@ -293,7 +290,9 @@ function processDocument(doc: Editor): noteLibrary {
 			continue;
 		}
 
-		// extract content and id
+		// extract list index, content and id
+		let listIndex = parseListIndex(match[1]);
+		listIndices.push(listIndex);
 		let text = removeTags(match[3]);
 		let { content, id } = getId(text);
 		if (!content && !id) {
@@ -320,7 +319,6 @@ function processDocument(doc: Editor): noteLibrary {
 					id, 
 					indices: [index], 
 					levels: [level], 
-					parentIndex: content.endsWith(':') ? getParentIndex(level, index) : null,
 					ref: index,
 				});
 			} else {
@@ -345,7 +343,6 @@ function processDocument(doc: Editor): noteLibrary {
 					id, 
 					indices: [index], 
 					levels: [level], 
-					parentIndex: null,
 					ref: index,
 				});
 			} else {
@@ -371,8 +368,9 @@ function processDocument(doc: Editor): noteLibrary {
 		for (let i = 0; i < group.indices.length; i++) {
 			const index = group.indices[i];
 			const level = group.levels[i];
-			if (levels[index + 1] > level) {
+			if (levels[index + 1] > level || (levels[index + 1] == level && listIndices[index + 1] == listIndices[index] + 1)) {
 				parents.push(index);
+				groups[groupIndex].ref = index;
 			}
 		}
 		if (parents.length > 1) {
@@ -411,7 +409,7 @@ function processDocument(doc: Editor): noteLibrary {
 	}
 
 	// console.log("processNotes() groups:", groups);
-	return {contents, ids, lines, levels, groups, warningLines, warnings};
+	return {listIndices, contents, ids, lines, levels, groups, warningLines, warnings};
 }
 
 function proofreadNotes(editor: Editor, library: noteLibrary) {
@@ -487,19 +485,22 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 		// assign ids and paths
 		
 		// update the tag
-		const noteTagMatch = noteTagRegex.exec(line);
-		if (noteTagMatch) { // tag exists; ignore
-			// const props = parseNoteProps(noteTagMatch[1]);
-			// props.path = path;
+		const noteMatch = noteRegex.exec(line);
+		if (noteMatch) { // tag exists; ignore
+			const note = parseNote(noteMatch);
+			note.props.path = path;
 
-			// const start = noteTagMatch.index
-			// const end = start + noteTagMatch[0].length;
-			// // console.log(props.path.last());
-			// editor.replaceRange(
-			// 	createNoteTag(props, true), 
-			// 	{ line: lineNumber, ch: start },
-			// 	{ line: lineNumber, ch: end }
-			// );
+			let addId = false;
+			const idTagMatch = /#\\w+/.exec(line);
+			if (!idTagMatch && note.id !== "") addId = true;
+			
+			const start = noteMatch.index
+			const end = start + noteMatch[0].length;
+			editor.replaceRange(
+				createNoteString(note), 
+				{ line: lineNumber, ch: start },
+				{ line: lineNumber, ch: end }
+			);
 		} else { // add properties tag
 			const props = createNoteProperties(study);
 			props.path = path;

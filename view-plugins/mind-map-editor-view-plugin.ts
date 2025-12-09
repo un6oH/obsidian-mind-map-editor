@@ -192,8 +192,9 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
           // find every match in the full text
           while ((noteMatch = noteRegex.exec(text)) !== null) {
             // console.log("View plugin: note match:", noteMatch[0]);
+            (noteMatch as any).indices.forEach((pair: number[], i: number, array: number[][]) => array[i] = [pair[0] + from, pair[1] + from]);
             let indices: number[][] = (noteMatch as any).indices;
-            indices = indices.map((pair) => [pair[0] + from, pair[1] + from]);
+            // indices = indices.map((pair) => [pair[0] + from, pair[1] + from]);
             
             const start = indices[3][0] - noteTagOpenLength;
             const end = indices[3][1] + noteTagCloseLength;

@@ -78,4 +78,6 @@ If your plugin does not need CSS, delete this file.
 .mindmap-node-label {
   fill: white;
   font-size: x-small;
+  background-color: rgba(0, 0, 0, 0.205);
+  text-shadow: black;
 }

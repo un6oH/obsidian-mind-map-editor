@@ -21,8 +21,20 @@ export interface NoteProperties {
 export interface Note {
   listIndex: number; // number in list. 0 if unordered list
   content: string; // full content in markdown
+  type: 'key word' | 'relation' | 'image';
   id: string | null; // "" if empty, null to force unlink
   props: NoteProperties; 
+}
+
+// stores content, index, and level of every instance of the same content
+// ref stores the index of the lowest level (reference) instance
+export interface NoteGroup {
+	content: string | undefined; // undefined if there is a conflict
+	id: string; // #<id> or ""
+	indices: number[]; // index in note library
+	levels: number[]; 
+	// parentIndex: number | null; // for duplicate relations under the same parent
+	ref: number;
 }
 
 export interface MindMap {

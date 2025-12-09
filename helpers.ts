@@ -71,14 +71,12 @@ export function parseMindMap(text: string): MindMap | null {
 		mindMap.map.settings = settings;
 	}
 
-	// note patterns
+	// notes
 	const noteRegex = new RegExp(notePattern, 'gm');
 	let noteMatch;
 	while ((noteMatch = noteRegex.exec(text)) !== null) {
 		mindMap.notes.push(parseNote(noteMatch));
 	}
-
-	// chain notes
 
 	return mindMap;
 }
@@ -95,6 +93,7 @@ export function createBlankNote(): Note {
   return {
 		listIndex: 0, 
     content: "", 
+		type: 'key word', 
 		id: null, 
     props: createNoteProperties(false), 
   }
@@ -125,10 +124,17 @@ export function parseMapTag(string: string): MapSettings {
 export function parseNote(match: RegExpExecArray): Note {
 	const note = {} as Note;
 
-	note.listIndex = listIndex(match[1]);
+	note.listIndex = parseListIndex(match[1]);
 
 	const { content, id } = getId(match[2]);
 	note.content = content;
+	if (note.content.endsWith(':')) {
+		note.type = 'relation';
+	} else if (pastedImageRegex.exec(note.content)) {
+		note.type = 'image';
+	} else {
+		note.type = 'key word';
+	}
 	note.id = id;
   
 	// parse the props string
@@ -148,7 +154,7 @@ export function getId(content: string): { content: string, id: string | null } {
 	if (idTagMatch) {
 		content = content.slice(0, (idTagMatch as any).indices[0][0]);
 		return {
-			content: content.slice(0, (idTagMatch as any).indices[0][0]), 
+			content: content.slice(0, (idTagMatch as any).indices[0][0]).trim(), 
 			id: idTagMatch[0].slice(1)
 		}
 	} else {
@@ -246,6 +252,20 @@ export function toNoteID(str: string, title: boolean = false): string {
 	}
 }
 
+export function createNoteString(note: Note): string {
+	let str = note.listIndex == 0 ? "- " : `${note.listIndex}. `;
+	str += note.content;
+	if (note.id == null) {
+		str += "* ";
+	} else if (note.id === "") {
+		str += " ";
+	} else {
+		str += " #" + note.id + " ";
+	}
+	str += createNoteTag(note.props, true);
+	return str;
+}
+
 export function createNoteTag(props: NoteProperties, includeTags: boolean): string {
 	// console.log("createNoteTag(): props:", props);
 	let string = includeTags ? noteTagOpen : "";
@@ -312,7 +332,7 @@ export function parseNumberArray(array: string): number[] {
   return splitString.map((str) => parseFloat(str));
 }
 
-export function listIndex(str: string): number {
+export function parseListIndex(str: string): number {
 	const parse = parseFloat(str);
 	return isNaN(parse) ? 0 : parse;
 }

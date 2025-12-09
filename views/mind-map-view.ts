@@ -1,5 +1,5 @@
 import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
-import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap } from 'types';
+import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
 import { toPathString } from 'helpers';
 import * as d3 from 'd3';
 import { Card, fsrs, FSRS, generatorParameters, RecordLog } from 'ts-fsrs';
@@ -7,7 +7,7 @@ import { Card, fsrs, FSRS, generatorParameters, RecordLog } from 'ts-fsrs';
 export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.005;
 const DEFAULT_ALPHADECAY = 0.30; // 1 - Math.pow(0.005, 1 / 30)
-const INITIAL_ALPHA = 1;
+const INITIAL_ALPHA = 0.5;
 const INITIAL_ALPHADECAY = 0.16
 const DRAG_ALPHA = 0.2;
 const DRAG_ALPHADECAY = 0.30;
@@ -32,6 +32,11 @@ interface Chain {
   parent: string; // id of parent
   nodes: string[] // array of nodes in the chain
 }
+
+// interface Alias {
+//   id: string;
+//   node: string;
+// }
 
 interface NodeCard extends Card {
   source: string;
@@ -61,11 +66,11 @@ const levelColour = [
 ];
 
 const COLOUR_STROKE = 'lightgrey';
-
+const COLOUR_DIVISIONS = 10;
 const colour = (level: number) => {
   // const value = 255 / (level + 1);
   // return `rgb(${value} ${value} ${value})`;
-  return d3.interpolateRainbow((level % 6) / 6);
+  return d3.interpolateRainbow((level % COLOUR_DIVISIONS) / COLOUR_DIVISIONS);
 }
 
 const size = (level: number) => 4 + 6 / (level + 1);
@@ -195,7 +200,7 @@ export class MindMapView extends ItemView {
     this.resize();
   }
 
-  initialiseMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
+  async initialiseMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
     this.mindMap = mindMap;
     this.layout = layout;
     this.saveProgressCallback = saveProgressCallback;
@@ -207,7 +212,7 @@ export class MindMapView extends ItemView {
     this.links = [];
 
     // add central node (title)
-    let centreNode: Node;
+    let centreNode = {} as Node;
     if (!mindMap.map.settings.separateHeadings) {
       centreNode = {
         id: this.mindMap.map.id, 
@@ -224,93 +229,127 @@ export class MindMapView extends ItemView {
       // console.log(centreNode);
     }
 
-    // preprocessing step:
-    // find chain nodes
+    // preprocessing
+    const groups: NoteGroup[] = [];
     const chains: Chain[] = [];
-    
+    let index = 0;
     for (let note of this.mindMap.notes) {
+      // add id groups
+      if (note.id) {
+        const groupIndex = groups.findIndex((group) => group.id === note.id);
+        if (groupIndex == -1) { // no matching id
+          groups.push({
+            content: note.content, 
+            id: note.id, 
+            indices: [index], 
+            levels: [], 
+            ref: index,
+          });
+        } else {
+          groups[groupIndex].indices.push(index);
+          // make this note the reference if it has children or is before a note
+          const level = note.props.path.length;
+          const nextIndex = index + 1;
+          if (nextIndex < this.mindMap.notes.length) {
+            const next = this.mindMap.notes[nextIndex];
+            if (
+              level < next.props.path.length ||
+              (level == next.props.path.length && note.listIndex == next.listIndex - 1)
+            ) groups[groupIndex].ref = index;
+          }
+        }
+      }
+      index++;
+
+      // find chains
       const listIndex = note.listIndex;
       if (listIndex == 0) continue;
 
-      let id = note.id ? note.id : toPathString(note.props.path);
-
+      let id = toPathString(note.props.path);
       let parent = toPathString(note.props.path.slice(0, -1));
-      if (note.props.path.length == 1) {
-        if (this.mindMap.map.settings.separateHeadings) {
+      if (note.props.path.length == 1) { // top level note 
+        if (this.mindMap.map.settings.separateHeadings) { // must have centre node
           new Notice("Must not separate headings if top level notes are in a chain.");
-          console.log("initialiseMindMap() chain at top level does not have centre node");
+          console.log("initialiseMindMap() Error: chain at top level does not have centre node");
           return;
         } else {
-          parent = this.mindMap.map.id;
+          parent = centreNode.id;
         }
       }
 
-      const chainIndex = chains.findIndex((group) => group.parent === parent);
+      // add to chain array
+      const chainIndex = chains.findIndex((chain) => chain.parent === parent);
       if (chainIndex != -1) {
-        chains[chainIndex].nodes[listIndex - 1] = id;
+        chains[chainIndex].nodes[listIndex - 1] = id; // assign chain
       } else {
         let i = chains.push({
-          parent: parent, 
+          parent, 
           nodes: []
         });
         chains[i - 1].nodes[listIndex - 1] = id;
-        // console.log("added chain group with parent:", parent);
       }
     }
-    for (let group of chains) {
-      group.nodes.forEach((id) => {
-        if (!id) {
-          console.log("MindMapView.createMindMap() Error: chain entry missing.");
+
+    // verify chains
+    for (let chain of chains) {
+      for (let i = 0; i < chain.nodes.length; i++) {
+        if (chain.nodes[i] == undefined) {
+          console.log("initialiseMindMap() Error: chain entry missing.");
           return;
         }
-      });
+      }
     }
-    // console.log("createMindMap(): chain groups:", chains);
 
-    // add notes
-    const nodeIDs: string[] = [];
+    // populate nodes and links
+    index = 0;
     for (let note of this.mindMap.notes) {
-      let path = toPathString(note.props.path);
-      let id = path;
-      if (note.id && mindMap.map.settings.crosslink) { // note has predetermined node id AND crosslinking enabled
-        id = note.id;
+      let nodeId: string;
+      const path = note.props.path;
+      let crosslink = false;
+      // check crosslinks
+      if (note.id) {
+        const groupIndex = groups.findIndex((group) => group.id === note.id)
+        const refIndex = groups[groupIndex].ref;
+        const ref = this.mindMap.notes[refIndex];
+        nodeId = toPathString(ref.props.path);
+        crosslink = refIndex != index; // link goes to the reference node
+      } else {
+        nodeId = toPathString(path);
       }
-      let isRelation = note.content.endsWith(':');
-      let level = note.props.path.length; // study depth of the node
-      let pathBuffer = note.props.path.slice(0, level - 1);
-      if (note.content.endsWith(':')) level--;
-      if (this.mindMap.map.settings.separateHeadings) level++;
+      index++;
 
-      // console.log(toPathString(pathBuffer), "level:", level);
-      while (pathBuffer.length > 0) {
-        let targetId = toPathString(pathBuffer);
-        let target = mindMap.notes.find((note) => toPathString(note.props.path) === targetId);
-        if (target?.content.endsWith(':')) { // note is a keyword
-          // console.log(`note not studyable id: ${targetId}`);
-          level--; // decrement study level
-        }
-        pathBuffer.pop();
-      }
+      let level = 0; // key word depth of the node
+      level = path.length - 1;
+      let pathBuffer = path.slice(0, -1);
+      // count how many key words there are before the node
+      // while (pathBuffer.length > 0) {
+      //   let targetId = toPathString(pathBuffer);
+      //   let target = mindMap.notes.find((note) => toPathString(note.props.path) === targetId);
+      //   if (target?.type === 'key word') { // note is a keyword
+      //     level++; // decrement study level
+      //   }
+      //   pathBuffer.pop();
+      // }
+      // if (note.type === 'key word') level++;
+
       let study = note.props.study;
 
-      if (!nodeIDs.contains(id)) { // only add unique nodes
-        // console.log("level:", level);
+      if (!crosslink) { // only add nodes when note has content ()
         const node: Node = {
-          id, 
+          id: nodeId, 
           content: note.content, 
-          level: level, 
+          level: note.type === 'key word' ? level +  1 : level, 
           study, 
           centre: false, 
         };
         if (presetLayout) {
-          const nodeIndex = layout.ids.findIndex((value) => value === id);
+          const nodeIndex = layout.ids.findIndex((value) => value === nodeId);
           if (nodeIndex != -1) {
             node.x = layout.xCoords[nodeIndex];
             node.y = layout.yCoords[nodeIndex];
           }
         }
         this.nodes.push(node);
-        nodeIDs.push(id);
       }
 
       // separate headings
@@ -318,25 +357,26 @@ export class MindMapView extends ItemView {
 
       // link node to parent
       let listIndex = note.listIndex;
-      let parent = note.props.path.length == 1 ? centreNode!.id : toPathString(note.props.path.slice(0, -1));
+      let parent = path.length == 1 ? centreNode!.id : toPathString(note.props.path.slice(0, -1));
       let source = parent;
       let depth = note.props.path.length;
       if (listIndex > 1) { // node in a chain
         let chainIndex = chains.findIndex((group) => group.parent === parent);
-        console.log(parent, chainIndex);
+        // console.log(parent, chainIndex);
         source = chains[chainIndex].nodes[listIndex - 2];
       }
       this.links.push({
-        source, target: id, level: isRelation ? level : level - 1, 
+        source, target: nodeId, level: listIndex > 1 ? level + 1 : level, 
       });
+      // console.log(`created link ${source} -> ${nodeId}`);
       if (study) {
         this.cards.push({
-          source, target: id, depth, listIndex, 
+          source, target: nodeId, depth, listIndex, 
           ...note.props.card!
         });
       }
     }
-    console.log("createMindMap(): created cards", this.cards);
+    // console.log("createMindMap(): created cards", this.cards);
 
     // console.log(this.nodes);
     // console.log(this.links);
@@ -346,6 +386,8 @@ export class MindMapView extends ItemView {
   async createGraph() {
     const presetLayout = this.layout.ids.length != 0;
     console.log("MindMapView.createGraph(): preset layout:", presetLayout);
+
+    // const root = d3.hierarchy()
 
     this.simulation = d3.forceSimulation<Node>(this.nodes)
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
@@ -401,7 +443,7 @@ export class MindMapView extends ItemView {
           this.focusNodes();
           return;
         }
-        console.log("node.click: filtering by children of", d.id);
+        // console.log("node.click: filtering by children of", d.id);
         this.focusNodes(d.id);
       })
       .call(d3.drag<SVGCircleElement, Node>()
@@ -432,6 +474,7 @@ export class MindMapView extends ItemView {
         .attr("dominant-baseline", "central")
         .attr("pointer-events", "none")
         .attr("class", "mindmap-node-label");
+      // .on('hover', )
 
     this.focusNodes();
   }
@@ -562,7 +605,7 @@ export class MindMapView extends ItemView {
       this.simulation.alphaTarget(INITIAL_ALPHA).restart();
     } else {
       this.simulationButton.textContent = "Run simulation";
-      this.simulation.alphaDecay(DRAG_ALPHADECAY);
+      this.simulation.alphaTarget(0).alphaDecay(DRAG_ALPHADECAY);
     }
   }
 

@@ -107,18 +107,7 @@ export class UpdateNotesModal extends Modal {
 
 		this.setTitle("Update notes");
 
-		let proofread = true;
 		const settings = parseMapTag(editor.getLine(1));
-
-		// new Setting(this.contentEl)
-		// 	.setName("Proofread")
-		// 	.addToggle((toggle) => toggle
-		// 		.setValue(proofread)
-		// 		.onChange(value => proofread = value))
-		// 	.addButton((button) => button
-		// 		.setButtonText("Dismiss all warnings")
-		// 		.setCta()
-		// 		.onClick(() => dismissWarnings(editor)));
 
 		new Setting(this.contentEl)
 			.setName(`Crosslink ${settings.crosslink ? "enabled" : "disabled"}`);
@@ -136,29 +125,6 @@ export class UpdateNotesModal extends Modal {
 					this.close();
 				}));
 	}
-
-	// dismissWarnings(editor: Editor) {
-	// 	const doc = editor.getDoc();
-	// 	const lineCount = doc.lineCount();
-	// 	const errorTagRegex = RegExp(errorTagPattern, 'd')
-	// 	for (let l = lineCount - 1; l >= 0; l--) {
-	// 		const line = doc.getLine(l);
-	// 		const match = errorTagRegex.exec(line);
-
-	// 		if (!match) continue;
-
-	// 		const indices: number[][] = (match as any).indices;
-	// 		const start = indices[1][0];
-	// 		const end = indices[1][2];
-
-	// 		editor.replaceRange("", 
-	// 			{ line: l, ch: start },
-	// 			{ line: l, ch: end }
-	// 		);
-	// 	}
-
-	// 	console.log("UpdateNotes.dismissWarnings(): Dismissed all warnings")
-	// }
 }
 
 export class StudyNotesModal extends Modal {
