@@ -397,18 +397,10 @@ export class NotePropertyEditorModal extends Modal {
 				.setName('Card elapsed days / scheduled days')
 				.addText((text) =>
 					text.setPlaceholder(card.elapsed_days.toString() + " / " + card.scheduled_days.toString()).setDisabled(true));
-			// new Setting(this.contentEl)
-			// 	.setName('Card scheduled days')
-			// 	.addText((text) =>
-			// 		text.setPlaceholder(card.scheduled_days.toString()).setDisabled(true));
 			new Setting(this.contentEl)
 				.setName('Card reps/lapses')
 				.addText((text) =>
 					text.setPlaceholder(card.reps.toString() + " / " + card.lapses.toString()).setDisabled(true));
-			// new Setting(this.contentEl)
-			// 	.setName('Card lapses')
-			// 	.addText((text) =>
-			// 		text.setPlaceholder().setDisabled(true));
 			new Setting(this.contentEl)
 				.setName('Card state')
 				.addText((text) =>
@@ -472,8 +464,8 @@ export class NotePropertyEditorModal extends Modal {
 	deleteCard(indices: number[][]) {
 		const edit = this.view.state.update({
 			changes: {
-				from: indices[3][0] - noteTagOpen.length,
-				to: indices[3][1] + noteTagClose.length,
+				from: indices[4][0] - noteTagOpen.length,
+				to: indices[4][1] + noteTagClose.length,
 			}
 		});
 		this.view.dispatch(edit);

@@ -139,12 +139,6 @@ export default class MindMapEditorPlugin extends Plugin {
 			}
 		});
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			// console.log('click', evt);
-		});
-
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
 	}
@@ -452,12 +446,11 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 		
 		const type = noteType(content);
 		const study = type.study;
-
-		// assign ids and paths
 		
 		// update the tag
 		const noteMatch = noteRegex.exec(line);
-		if (noteMatch) { // tag exists; ignore
+		if (noteMatch) {
+			const indices = (noteMatch as any).indices;
 			const note = parseNote(noteMatch);
 			note.props.path = path;
 
@@ -465,8 +458,8 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 			const idTagMatch = /#\\w+/.exec(line);
 			if (!idTagMatch && note.id !== "") addId = true;
 			
-			const start = noteMatch.index
-			const end = start + noteMatch[0].length;
+			const start = indices[2][0]
+			const end = indices[0][1];
 			editor.replaceRange(
 				createNoteString(note), 
 				{ line: lineNumber, ch: start },
