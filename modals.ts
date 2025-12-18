@@ -1,9 +1,9 @@
 import { EditorView } from '@codemirror/view';
 import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { FSRSParameters, generatorParameters, State } from 'ts-fsrs';
-import { MapProperties, MapSettings, Note, Warning } from 'types';
+import { MapProperties, MapSettings, MindMap, Note, Warning } from 'types';
 import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex } from 'helpers';
-import MindMapEditorPlugin, { dismissWarnings, studyNotes, updateMapSettings, updateNotes } from 'main';
+import MindMapEditorPlugin, { dismissWarnings, studyMindMap, updateMapSettings, updateNotes } from 'main';
 
 export class MindMapCreatorModal extends Modal {
 	constructor(app: App, title: string, editorCallback: (text: string) => void) {
@@ -127,24 +127,74 @@ export class UpdateNotesModal extends Modal {
 	}
 }
 
-export class StudyNotesModal extends Modal {
-	constructor(app: App, plugin: MindMapEditorPlugin, editor: Editor, title: string) {
-		super(app);
+export class StudyMindMapModal extends Modal {
+	constructor(plugin: MindMapEditorPlugin, editor: Editor, mindMap: MindMap) {
+		super(plugin.app);
 
-		this.setTitle("Study " + title);
+		this.setTitle("Study " + mindMap.map.title);
+
+		let newCount = 0, learningCount = 0, reviewCount = 0;
+		mindMap.notes.forEach((note) => {
+			if (!note.props.study) return;
+			switch(note.props.card!.state) {
+				case State.New: newCount++; break;
+				case State.Learning || State.Relearning: learningCount++; break;
+				case State.Review: reviewCount++; break;
+			}
+		})
+
+		new Setting(this.contentEl)
+			.setName("New:")
+			.addText((text) => text
+				.setValue(newCount.toString())
+				.setDisabled(true)
+			);
+
+		new Setting(this.contentEl)
+			.setName("Learning:")
+			.addText((text) => text
+				.setValue(learningCount.toString())
+				.setDisabled(true)
+			);
+
+		new Setting(this.contentEl)
+			.setName("To Review:")
+			.addText((text) => text
+				.setValue(reviewCount.toString())
+				.setDisabled(true)
+			);
+
+		new Setting(this.contentEl)
+			.setHeading()
+			.setName("Settings:");
+
+		new Setting(this.contentEl)
+			.setName("Separate headings")
+			.setDesc("Turn on to remove the centre node to create separate mind maps")
+			.addToggle((toggle) => toggle
+				.setValue(mindMap.map.settings.separateHeadings)
+				.onChange((value) => mindMap.map.settings.separateHeadings = value)
+			);
+		new Setting(this.contentEl)
+			.setName("Crosslink")
+			.setDesc("Identical key words link together")
+			.addToggle((toggle) => toggle
+				.setValue(mindMap.map.settings.crosslink)
+				.onChange((value) => mindMap.map.settings.crosslink = value)
+			);
 		
 		new Setting(this.contentEl)
 			.addButton((button) => button
 				.setButtonText("Update")
 				.setCta()
 				.onClick(() => {
-					new UpdateNotesModal(app, editor).open();
+					new UpdateNotesModal(plugin.app, editor).open();
 				}))
 			.addButton((button) => button
 				.setButtonText("Let's go!")
 				.setCta()
 				.onClick(() => {
-					studyNotes(app, plugin, editor);
+					studyMindMap(plugin, editor, mindMap);
 					this.close();
 				}));
 	}
@@ -303,7 +353,7 @@ export class NotePropertyEditorModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					idField.setValue("");
-					this.note.id = null;
+					this.note.id = "";
 				})
 			)
 			.addButton((button) => button
@@ -403,16 +453,16 @@ export class NotePropertyEditorModal extends Modal {
 		}
 		const contentEdit = this.view.state.update({
 			changes: {
-				from: indices[2][0], 
-				to: indices[2][1], 
+				from: indices[3][0], 
+				to: indices[3][1], 
 				insert: content + " ", 
 			}
 		});
 
 		const propsEdit = this.view.state.update({
 			changes: {
-				from: indices[3][0], 
-				to: indices[3][1], 
+				from: indices[4][0], 
+				to: indices[4][1], 
 				insert: createNoteTag(this.note.props, false), 
 			}
 		});
@@ -462,7 +512,7 @@ class IdSuggestModal extends SuggestModal<ID> {
 			let path = parsePath(taggedNoteMatch[4].split(';')[0]);
 			this.notes.push({ content, id, path });
 		}
-		console.log(this.notes);
+		// console.log(this.notes);
 	}
 
 	getSuggestions(query: string): ID[] {

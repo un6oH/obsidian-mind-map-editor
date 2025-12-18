@@ -2,9 +2,9 @@ import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidi
 import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup } from 'types';
+import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap } from 'types';
 import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getId, noteRegex, parseNote, createNoteString } from 'helpers';
-import { MindMapCreatorModal, StudyNotesModal, UpdateNotesModal } from 'modals';
+import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
 const DEFAULT_SETTINGS = {
@@ -22,9 +22,9 @@ export default class MindMapEditorPlugin extends Plugin {
 		await this.loadSettings().then(() => {
 			if (this.settings.layouts.length > 0) {
 				const paths = this.settings.layouts.map((layout) => layout.path);
-				console.log("Loaded saved layouts for:", paths);
+				// console.log("Loaded saved layouts for:", paths);
 			} else {
-				console.log("No saved layouts");
+				// console.log("No saved layouts");
 			}
 		});
 
@@ -59,7 +59,24 @@ export default class MindMapEditorPlugin extends Plugin {
 		studyMindMapStatusBarItem.textContent = `Study mind map`;
 		studyMindMapStatusBarItem.onclick = () => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-			new StudyNotesModal(this.app, this, activeView!.editor, this.currentMindMapTitle).open();
+			const editor = activeView!.editor;
+			const text = activeView!.editor.getRange(
+				{ line: 0, ch: 0 }, 
+				{ line: editor.lineCount() - 1, ch: editor.lastLine.length }
+			);
+			const library = processDocument(editor.getDoc());
+			if (library.warningLines.length != 0) {
+				new Notice("Unresolved warnings - fix notes");
+				proofreadNotes(editor, library);
+				return;
+			}
+			const mindMap = parseMindMap(text);
+			if (!mindMap) {
+				new Notice("Mind map not found.");
+				return;
+			}
+
+			new StudyMindMapModal(this, editor, mindMap).open();
 		}
 
 		const cursorIndexStatusBarItem = this.addStatusBarItem();
@@ -107,13 +124,6 @@ export default class MindMapEditorPlugin extends Plugin {
 			editorCallback: addMindMapTag
 		});
 
-		// Add a command to insert a mind map tag under the selected line
-		// this.addCommand({
-		// 	id: 'mindmapeditor-create-mind-map', 
-		// 	name: 'Create mind map from selection', 
-		// 	editorCallback: createMindMap
-		// });
-
 		// analyses the selected map for nodes to add or update
 		this.addCommand({
 			id: 'mindmapeditor-update-notes', 
@@ -128,26 +138,6 @@ export default class MindMapEditorPlugin extends Plugin {
 				}
 			}
 		});
-
-		// this.addCommand({
-		// 	id: 'mindmapeditor-get-cursor-index', 
-		// 	name: 'Get cursor index', 
-		// 	editorCallback: (editor: Editor) => {
-		// 		if (isMindMap(editor)) {
-		// 			const cursorPosition = editor.getCursor();
-		// 			let nCharacters = 0;
-		// 			for (let l = cursorPosition.line - 1; l >= 0; l--) {
-		// 				nCharacters += editor.getLine(l).length;
-		// 			}
-		// 			console.log("cursor index:", nCharacters + cursorPosition.ch);
-		// 		} else {
-		// 			new Notice("Not in an editor.");
-		// 		}
-		// 	}
-		// });
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		// this.addSettingTab(new SampleSettingTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
@@ -181,27 +171,8 @@ export function updateMapSettings(editor: Editor, settings: MapSettings) {
 	)
 }
 
-export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: Editor) {
-	const doc = editor.getDoc();
-	const library = processDocument(doc);
-	if (library.warningLines.length != 0) {
-		new Notice("Unresolved warnings - fix notes");
-		proofreadNotes(editor, library);
-		return;
-	}
-	
-	const lineCount = editor.lineCount();
-	const from = { line: 0, ch: 0 };
-	const to = { line: lineCount - 1, ch: editor.getLine(lineCount - 1).length };
-	const mindMap = parseMindMap(editor.getRange(from, to));
-	console.log("studyNotes(): mind map parsed: ", mindMap);
-
-	if (!mindMap) {
-		new Notice("Mind map not found");
-		return;
-	}
-
-	const filePath = app.workspace.activeEditor?.file?.path!;
+export async function studyMindMap(plugin: MindMapEditorPlugin, editor: Editor, mindMap: MindMap) {
+	const filePath = plugin.app.workspace.activeEditor?.file?.path!;
 	// console.log(filePath);
 	let layoutIndex = plugin.settings.layouts.findIndex((layout) => layout.path === filePath);
 	const layout: MindMapLayout = {
@@ -211,26 +182,26 @@ export async function studyNotes(app: App, plugin: MindMapEditorPlugin, editor: 
 		yCoords: layoutIndex != -1 ? plugin.settings.layouts[layoutIndex].yCoords : [], 
 	}
 
-	const { workspace } = app;
+	const workspace = plugin.app.workspace;
 
 	let leaf: WorkspaceLeaf | null = null;
 	const leaves = workspace.getLeavesOfType(VIEW_TYPE_MIND_MAP);
 
 	if (leaves.length > 0) {
 		// A leaf with our view already exists, use that
+		console.log("studyMindMap() leaf with view exists");
 		leaf = leaves[0];
 	} else {
 		// Our view could not be found in the workspace, create a new leaf
+		console.log("studyMindMap() leaf with view does not exist");
 		leaf = workspace.getLeaf('window');
 		await leaf.setViewState({ type: VIEW_TYPE_MIND_MAP, active: true });
 	}
 
 	// "Reveal" the leaf in case it is in a collapsed sidebar
-	await workspace.revealLeaf(leaf)
-		.then(() => {
-			this.mindMapView = leaf.view as MindMapView;
-			this.mindMapView.initialiseMindMap(mindMap, layout, () => updateNote(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
-		});
+	await workspace.revealLeaf(leaf);
+	const view = leaf.view as MindMapView;
+	await view.loadGraph(mindMap, layout, () => updateNote(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
 }
 
 interface noteLibrary {
@@ -468,7 +439,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 	}
 
 	// recursively iterates through list to generate a list of paths
-	const paths = noteTree(library.contents, library.levels, []);
+	const paths = noteTree(library.contents, library.ids, library.levels, []);
 	// console.log("updateNotes(): parsed note tree. paths:", paths);
 
 	// update the props tag for each note
@@ -521,7 +492,7 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 
 // input: array of note content and associated line number and indent level
 // initially called under the mind map title
-function noteTree(notes: string[], levels: number[], path: string[]): string[][] {
+function noteTree(notes: string[], ids: (string | null)[], levels: number[], path: string[]): string[][] {
 	// get indices of lines of immediate children
 	const minLevelIndices: number[] = [];
 	for (let i = 0; i < notes.length; i++) { // iterate over each entry
@@ -536,14 +507,14 @@ function noteTree(notes: string[], levels: number[], path: string[]): string[][]
 	let paths: string[][] = []; // path accumulator
 	for (let index = 0; index < minLevelIndices.length - 1; index++) {
 		const i = minLevelIndices[index];
-		let self = toNoteID(notes[i]); // convert to id
+		let self = toNoteID(notes[i] ? notes[i] : ids[i]!); // convert to id
 		let newPath = path.concat(self);
 		paths.push(newPath);
 		// console.log("added new path", newPath);
 		// indices of slice to pass into next recursion
 		let start = i + 1; 
 		let end = minLevelIndices[index + 1];
-		paths.push(...noteTree(notes.slice(start, end), levels.slice(start, end), newPath));
+		paths.push(...noteTree(notes.slice(start, end), ids.slice(start, end), levels.slice(start, end), newPath));
 	}
 
 	return paths;
@@ -564,10 +535,10 @@ export function isMindMap(editor: Editor): string { // returns map title if map 
 
 	const tagMatch = mapTagRegex.exec(editor.getLine(1));
 	if (tagMatch) {
-		console.log("isMindMap(): mind map identified", title);
+		console.log("isMindMap() mind map identified:", title);
 		return title;
 	} else {
-		console.log("isMindMap(): tag not found");
+		console.log("isMindMap() tag not found");
 		return "";
 	}
 }

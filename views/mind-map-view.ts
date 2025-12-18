@@ -1,6 +1,6 @@
 import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
 import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
-import { toPathString } from 'helpers';
+import { toPathString, colour } from 'helpers';
 import * as d3 from 'd3';
 import { Card, fsrs, FSRS, generatorParameters, RecordLog } from 'ts-fsrs';
 
@@ -11,6 +11,7 @@ const INITIAL_ALPHA = 0.5;
 const INITIAL_ALPHADECAY = 0.16
 const DRAG_ALPHA = 0.2;
 const DRAG_ALPHADECAY = 0.30;
+const SCALE_EXTENT: [number, number] = [0.25, 4.0];
 
 interface Node extends d3.SimulationNodeDatum {
   id: string;
@@ -65,14 +66,6 @@ const levelColour = [
   'violet',
 ];
 
-const COLOUR_STROKE = 'lightgrey';
-const COLOUR_DIVISIONS = 10;
-const colour = (level: number) => {
-  // const value = 255 / (level + 1);
-  // return `rgb(${value} ${value} ${value})`;
-  return d3.interpolateRainbow((level % COLOUR_DIVISIONS) / COLOUR_DIVISIONS);
-}
-
 const size = (level: number) => 4 + 6 / (level + 1);
 
 export class MindMapView extends ItemView {
@@ -114,9 +107,14 @@ export class MindMapView extends ItemView {
   simulationRunning = false;
   simulationButtonHandler: () => void;
 
+  createGraphButton: Element;
+  createGraphButtonHandler: () => void;
+
   layout: MindMapLayout;
   saveProgressCallback: () => void;
   saveLayoutCallback: (layout: MindMapLayout) => void;
+
+  loaded = false;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -161,6 +159,11 @@ export class MindMapView extends ItemView {
     this.simulationButtonHandler = () => this.toggleSimulation();
     this.simulationButton.addEventListener('click', this.simulationButtonHandler);
 
+    this.createGraphButton = document.createElement('button');
+    this.createGraphButton.textContent = "Create graph";
+    this.createGraphButtonHandler = () => this.createGraph();
+    this.createGraphButton.addEventListener('click', this.createGraphButtonHandler);
+
     const container = this.containerEl.children[1];
     container.addClass('mind-map-view-container');
     container.empty();
@@ -177,15 +180,11 @@ export class MindMapView extends ItemView {
       actionsContainer.appendChild(this.searchTypeButton);
       actionsContainer.appendChild(this.viewModeButton);
       actionsContainer.appendChild(this.simulationButton);
+      actionsContainer.appendChild(this.createGraphButton);
     }
-
-    this.width = this.graphContainer.clientWidth;
-    this.height = this.graphContainer.clientHeight;
   }
 
   async onClose() {
-    // Nothing to clean up.
-    this.graphContainer.removeEventListener('resize', this.resize);
     this.studyButton.removeEventListener("click", this.studyButtonHandler);
     this.studyButton.remove();
     this.searchTypeButton.removeEventListener('click', this.searchTypeButtonHandler);
@@ -194,10 +193,27 @@ export class MindMapView extends ItemView {
     this.viewModeButton.remove();
     this.simulationButton.removeEventListener('click', this.simulationButtonHandler);
     this.simulationButton.remove();
+    this.createGraphButton.removeEventListener('click', this.createGraphButtonHandler);
+    this.createGraphButton.remove();
   }
 
   onResize() {
-    this.resize();
+    this.width = this.graphContainer.clientWidth;
+    this.height = this.graphContainer.clientHeight;
+    console.log("onResize()", this.width, this.height);
+    this.svg.attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height]);
+    this.zoom = this.zoom.extent([[-this.width / 2, -this.height / 2], [this.width / 2, this.height / 2]]);
+    this.svg.call(this.zoom);
+
+    if (!this.loaded) {
+      this.focusNodes();
+      this.loaded = true;
+    }
+  }
+
+  async loadGraph(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
+    this.initialiseMindMap(mindMap, layout, saveProgressCallback, saveLayoutCallback);
+    this.createGraph();
   }
 
   async initialiseMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
@@ -235,7 +251,7 @@ export class MindMapView extends ItemView {
     let index = 0;
     for (let note of this.mindMap.notes) {
       // add id groups
-      if (note.id) {
+      if (note.id && this.mindMap.map.settings.crosslink) {
         const groupIndex = groups.findIndex((group) => group.id === note.id);
         if (groupIndex == -1) { // no matching id
           groups.push({
@@ -307,7 +323,7 @@ export class MindMapView extends ItemView {
       const path = note.props.path;
       let crosslink = false;
       // check crosslinks
-      if (note.id) {
+      if (note.id && this.mindMap.map.settings.crosslink) {
         const groupIndex = groups.findIndex((group) => group.id === note.id)
         const refIndex = groups[groupIndex].ref;
         const ref = this.mindMap.notes[refIndex];
@@ -316,6 +332,7 @@ export class MindMapView extends ItemView {
       } else {
         nodeId = toPathString(path);
       }
+      // console.log(crosslink);
       index++;
 
       let level = 0; // key word depth of the node
@@ -338,7 +355,8 @@ export class MindMapView extends ItemView {
         const node: Node = {
           id: nodeId, 
           content: note.content, 
-          level: note.type === 'key word' ? level +  1 : level, 
+          // level: note.type === 'key word' ? level +  1 : level, 
+          level: level, 
           study, 
           centre: false, 
         };
@@ -366,7 +384,7 @@ export class MindMapView extends ItemView {
         source = chains[chainIndex].nodes[listIndex - 2];
       }
       this.links.push({
-        source, target: nodeId, level: listIndex > 1 ? level + 1 : level, 
+        source, target: nodeId, level: listIndex > 1 ? level: level - 1, 
       });
       // console.log(`created link ${source} -> ${nodeId}`);
       if (study) {
@@ -380,7 +398,8 @@ export class MindMapView extends ItemView {
 
     // console.log(this.nodes);
     // console.log(this.links);
-    this.createGraph();
+
+    console.log("initialiseMindMap() mind map initialised");
   }
 
   async createGraph() {
@@ -392,49 +411,45 @@ export class MindMapView extends ItemView {
     this.simulation = d3.forceSimulation<Node>(this.nodes)
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
       .force('charge', d3.forceManyBody().strength(-100).theta(0.9).distanceMax(100))
-      .alpha(presetLayout ? 0 : INITIAL_ALPHA)
+      .alpha(presetLayout ? 0.1 : INITIAL_ALPHA)
       .alphaDecay(INITIAL_ALPHADECAY)
       .alphaMin(MIN_ALPHA)
-      .on('tick', () => this.updateGraph());
+      // .on('tick', () => this.updateGraph());
+      .on('tick', () => {
+        try {
+          this.updateGraph();
+        } catch (error) {
+          console.log(error);
+        }
+      });
       
     this.graphContainer.empty();
 
-    
-    // this.resize();
-    // console.log("container size", this.graphContainer.clientWidth, this.graphContainer.clientHeight);
+    this.width = this.loaded ? this.graphContainer.clientWidth : 800;
+    this.height = this.loaded ? this.graphContainer.clientHeight : 600;
     this.svg = d3.select(this.graphContainer)
       .append("svg")
-      // .attr("style", "max-width: 100%; height: 100%;")
       .attr("width", "100%")
       .attr("height", "100%")
-      // .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height]);
+      // .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
       .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height])
       .on('click', () => this.focusNodes());
     
-    this.zoom = d3.zoom<SVGSVGElement, unknown>()
-      .extent([[-this.width / 2, -this.height / 2], [this.width / 2, this.height / 2]])
-      .scaleExtent([0.1, 2])
-      .on("zoom", (event) => this.zoomed(event));
-    this.svg.call(this.zoom);
-    
-    // this.link = this.svg.append('g').selectAll<SVGLineElement, Link>('line');
-    // this.node = this.svg.append('g').selectAll<SVGCircleElement, Node>('circle');
-    // this.label = this.svg.append('g').selectAll<SVGTextElement, Node>('text');
     this.link = this.svg.append('g')
       .selectAll<SVGLineElement, Link>('line')
       .data(this.links)
       .join('line')
-        .attr('stroke', d => colour(d.level))
+        .attr('stroke', d => d.level == -1 ? "gray" : colour(d.level))
         .attr('stroke-width', 2);
     this.node = this.svg.append('g')
       .selectAll<SVGCircleElement, Node>('circle')
       .data(this.nodes)
       .join('circle')
         .attr('nodeId', d => d.id)
-        .attr('fill', d => d.centre ? 'white' : d.study ? 'white' : colour(d.level)) // to do: white when before review, filled in when reviewed
+        .attr('fill', d => d.centre ? 'gray' : d.study ? 'white' : colour(d.level)) // to do: white when before review, filled in when reviewed
         .attr('r', d => d.centre ? 10 : (d.study ? size(d.level) : 3))
         .attr("stroke", d => d.centre ? 'white' : colour(d.level))
-        .attr("stroke-width", 1)
+        .attr("stroke-width", 2)
       .on('click', (event, d) => {
         event.stopPropagation();
         if (this.viewMode == ViewMode.Arrange) return;
@@ -444,7 +459,7 @@ export class MindMapView extends ItemView {
           return;
         }
         // console.log("node.click: filtering by children of", d.id);
-        this.focusNodes(d.id);
+        this.focusNodes(d, 2, 2);
       })
       .call(d3.drag<SVGCircleElement, Node>()
           .on('start', (event, d) => {
@@ -474,9 +489,14 @@ export class MindMapView extends ItemView {
         .attr("dominant-baseline", "central")
         .attr("pointer-events", "none")
         .attr("class", "mindmap-node-label");
-      // .on('hover', )
 
-    this.focusNodes();
+    this.zoom = d3.zoom<SVGSVGElement, unknown>()
+      .extent([[-this.width / 2, -this.height / 2], [this.width / 2, this.height / 2]])
+      .scaleExtent(SCALE_EXTENT)
+      .on("zoom", (event) => this.zoomed(event));
+    this.svg.call(this.zoom);
+
+    if (this.loaded) this.focusNodes();
   }
 
   updateGraph() {
@@ -531,33 +551,74 @@ export class MindMapView extends ItemView {
         this.layout.yCoords.push(y);
       }
     }
-    // console.log("this.node cx:", this.node.attr('cx', d => xCoords.push(d.x!)));
-    // console.log("this.node cy:", this.node.attr('cy', d => yCoords.push(d.y!)));
-    
-    // console.log("MindMapView.saveLayout(): layout", this.layout);
+
     this.saveLayoutCallback(this.layout);
   }
 
-  resize() {
-    this.width = this.graphContainer.clientWidth;
-    this.height = this.graphContainer.clientHeight;
-    console.log("resize():", this.width, this.height);
-    this.svg
-      .attr('width', this.width)
-      .attr('height', this.height)
-      .attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height]);
-  }
-
   zoomed(event: d3.D3ZoomEvent<SVGSVGElement, unknown>) {
-    const transform = event.transform;
-    this.node.attr("transform", transform.toString());
-    this.link.attr("transform", transform.toString());
-    this.label.attr("transform", transform.toString());
+    const transform = event.transform.toString();
+    this.node.attr("transform", transform);
+    this.link.attr("transform", transform);
+    this.label.attr("transform", transform);
   }
 
-  focusNodes(id?: string) {
-    const nodes = id ? this.nodes.filter((node) => node.id.startsWith(id)) : this.nodes;
-    // console.log("focusNodes() group size:", nodes.length);
+  getNodes(node: Node, backDepth: number, forwardDepth: number): Node[] {
+    const nodes: Node[] = [];
+    let parentNodes: Node[] = [node];
+    let childNodes: Node[] = [node];
+
+    let startIndex = 0;
+    let newIndex = 0;
+    for (let d = 0; d < backDepth; d++) {
+      newIndex = parentNodes.length;
+      parentNodes.slice(startIndex).forEach((node) => {
+        const links = this.links.filter((link) => (link.target as Node).id === node.id);
+        parentNodes.push(...links.map((link) => link.source as Node));
+      });
+      startIndex = newIndex;
+    }
+    childNodes.push(node);
+    startIndex = 0;
+    for (let i = 0; i < forwardDepth; i++) {
+      newIndex = childNodes.length;
+      childNodes.slice(startIndex).forEach((node) => {
+        const links = this.links.filter((link) => (link.source as Node).id === node.id);
+        childNodes.push(...links.map((link) => link.target as Node));
+      });
+      startIndex = newIndex;
+    }
+    parentNodes.forEach((test) => {
+      if (nodes.findIndex((node) => node.id === test.id) == -1) nodes.push(test);
+    });
+    childNodes.forEach((test) => {
+      if (nodes.findIndex((node) => node.id === test.id) == -1) nodes.push(test);
+    });
+
+    return nodes;
+  }
+
+  focusNodes(node?: Node, backDepth?: number, forwardDepth?: number) {
+    let nodes: Node[] = [];
+    let nodeIDs: string[] = [];
+    backDepth = backDepth ? backDepth : 0;
+    forwardDepth = forwardDepth ? forwardDepth : (backDepth ? backDepth : 0);
+    if (node) {
+      nodes = this.getNodes(node, backDepth, forwardDepth);
+      nodeIDs = nodes.map((node) => node.id);
+      
+      this.node.attr('opacity', d => nodeIDs.contains(d.id) ? "100%" : "50%");
+      this.link.attr('opacity', d => {
+        const containsTarget = nodeIDs.contains((d.target as Node).id);
+        const containsSource = nodeIDs.contains((d.source as Node).id);
+        return containsTarget && containsSource ? "100%" : "50%";
+      });
+      this.label.attr('opacity', d => nodeIDs.contains(d.id) ? "100%" : "0%");
+    } else {
+      this.node.attr('opacity', "100%",);
+      this.link.attr('opacity', "100%");
+      this.label.attr('opacity', "100%");
+      nodes = this.nodes;
+    }
 
     let minX, maxX, minY, maxY = 0;
     const xCoords = nodes.map((node) => node.x!);
@@ -569,16 +630,16 @@ export class MindMapView extends ItemView {
     // console.log(`frameNodes: corners (${minX}, ${minY}) and (${maxX}, ${maxY})`);
     const frameCentreX = (minX + maxX) * 0.5;
     const frameCentreY = (minY + maxY) * 0.5;
-    const frameWidth = maxX - minX;
-    const frameHeight = maxY - minY;
-    const widthBounded = (this.width / this.height) > (frameWidth / frameHeight); // frame is proportionally wider than the window
-    const scaleF = widthBounded ? this.width / frameWidth : this.height / frameHeight;
+    const frameWidth = Math.max(maxX - minX, 1);
+    const frameHeight = Math.max(maxY - minY, 1);
+    const scaleF = 0.833 * Math.min(this.width / frameWidth, this.height / frameHeight);
     
+    const transform = d3.zoomIdentity
+        .scale(Math.min(Math.max(scaleF, SCALE_EXTENT[0]), SCALE_EXTENT[1]))
+        .translate(-frameCentreX, -frameCentreY);
     this.svg.transition().duration(500).call(
-      this.zoom.transform, 
-      d3.zoomIdentity
-        .scale(Math.min(2.0, scaleF * 0.5))
-        .translate(-frameCentreX, -frameCentreY),
+      this.zoom.transform,
+      transform, 
     );
   }
 
@@ -644,31 +705,3 @@ export class MindMapView extends ItemView {
     console.log("generateSchedule() cards sorted", due.map((card) => card.source + " -> " + card.target.split('\\').last()));
   }
 }
-
-// class StudyManagerModal extends Modal {
-//   constructor(app: App, title: string, studyManagerCallback: (mode: string) => void) {
-//     super(app);
-//     console.log("Study settings modal created.");
-
-//     this.setTitle(`Study ${title}`);
-
-//     let mode = "smart";
-//     new Setting(this.contentEl)
-//       .setName("Mode")
-//       .addDropdown((dropdown) => dropdown
-//         .addOption("smart", "Smart (default)")
-//         .addOption("depth-first", "Depth-first")
-//         .addOption("breadth-first", "Breadth-first")
-//         .addOption("navigate", "Navigate")
-//         .onChange((value) => mode = value));
-
-//     new Setting(this.contentEl)
-//       .addButton((button) => button
-//         .setButtonText("Start!")
-//         .setCta()
-//         .onClick(() => {
-//           this.close();
-//           studyManagerCallback(mode);
-//         }));
-//   }
-// }

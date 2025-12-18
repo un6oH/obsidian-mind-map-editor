@@ -1,9 +1,10 @@
-import { generatorParameters, createEmptyCard, FSRSParameters, Card } from "ts-fsrs";
+import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } from "ts-fsrs";
 import { MapProperties, NoteProperties, Note, MindMap, MapSettings } from "types";
+import { interpolateRainbow } from "d3";
 
 export const noteTagOpen = "%%note";
 export const noteTagClose = "%%";
-export const notePattern = `(?<list>[0-9]+\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
+export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
 export const noteRegex = RegExp(notePattern, 'd');
 // [1]: list delimiter
 // [2]: content
@@ -124,9 +125,9 @@ export function parseMapTag(string: string): MapSettings {
 export function parseNote(match: RegExpExecArray): Note {
 	const note = {} as Note;
 
-	note.listIndex = parseListIndex(match[1]);
+	note.listIndex = parseListIndex(match[2]);
 
-	const { content, id } = getId(match[2]);
+	const { content, id } = getId(match[3]);
 	note.content = content;
 	if (note.content.endsWith(':')) {
 		note.type = 'relation';
@@ -138,7 +139,7 @@ export function parseNote(match: RegExpExecArray): Note {
 	note.id = id;
   
 	// parse the props string
-	note.props = parseNoteProps(match[3]);
+	note.props = parseNoteProps(match[4]);
 	return note;
 }
 
@@ -348,3 +349,15 @@ export function removeTags(text: string): string {
 	}
 	return text.trim();
 }
+
+export const COLOUR_DIVISIONS = 8;
+export const colourSet = new Array(COLOUR_DIVISIONS).fill(0).map((_, i) => interpolateRainbow(i / COLOUR_DIVISIONS));
+export function colour(t: number) {
+	return colourSet[t % COLOUR_DIVISIONS];
+}
+const cardStateColours: string[] = [];
+cardStateColours[State.Learning] = "#F87171";
+cardStateColours[State.New] = "#93C5FD";
+cardStateColours[State.Review] = "#22C55E";
+cardStateColours[State.Relearning] = "#F87171";
+export { cardStateColours };

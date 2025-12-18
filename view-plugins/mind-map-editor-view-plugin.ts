@@ -11,8 +11,9 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getId } from 'helpers';
+import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getId, parseNote, colour, cardStateColours } from 'helpers';
 import { Warning } from 'types';
+import { State } from 'ts-fsrs';
 
 class MapStudyParametersWidget extends WidgetType {
   app: App;
@@ -27,10 +28,10 @@ class MapStudyParametersWidget extends WidgetType {
   }
 
   toDOM(view: EditorView) {
-    const button = document.createElement('a');
+    const button = document.createElement('button');
     button.textContent = 'Inspect map settings';
-    button.className = "widget-map-metadata";
-    button.onclick = () => {  
+    button.className = "widget-map";
+    button.onclick = () => {
       // console.log("creating map settings editor modal");
       new MapSettingsEditorModal(this.app, view, this.start, this.end).open();
     };
@@ -42,40 +43,123 @@ class MapStudyParametersWidget extends WidgetType {
   }
 }
 
+// class NodeIconWidget extends WidgetType {
+//   study: boolean;
+//   level: number;
+//   state: State | null;
+
+//   constructor(study: boolean, level: number, state: State | null) {
+//     super();
+//     this.study = study;
+//     this.level = level;
+//     this.state = state;
+//   }
+
+//   toDOM() {
+//     const span = document.createElement('span');
+//     // span.addClass("widget-node-icon");
+//     const icon = document.createElementNS("http://www.w3.org/2000/svg", 'svg');
+//     // icon.setAttributeNS(null, "width", "100%");
+//     // icon.setAttributeNS(null, "height", "24");
+//     icon.setAttributeNS(null, "viewBox", "0 0 24 24");
+//     const circle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+//     icon.addClass("widget-node-icon");
+//     circle.setAttributeNS(null, "cx", "12");
+//     circle.setAttributeNS(null, "cy", "12");
+//     // circle.setAttributeNS(null, "w", "5");
+//     // circle.setAttributeNS(null, "h", "5");
+//     circle.setAttributeNS(null, "r", this.study ? "10" : "3");
+//     circle.setAttributeNS(null, "fill", this.study ? cardStateColours[this.state!] : colour(this.level));
+//     circle.setAttributeNS(null, "stroke", colour(this.level));
+//     circle.setAttributeNS(null, "stroke-width", this.study ? "2" : "0");
+//     icon.appendChild(circle);
+//     span.appendChild(icon);
+//     return span;
+//   }
+  
+//   ignoreEvent() {
+//     return false;
+//   }
+// }
+
 class NoteDataWidget extends WidgetType {
   app: App;
   view: EditorView;
   noteMatch: RegExpExecArray;
   indices: number[][];
-  isKeyWord: boolean;
-  isStudyable: boolean;
+  level: number;
+  content: string;
   id: string | null;
+  isKeyWord: boolean;
+  study: boolean;
+  state: State;
 
-  constructor(app: App, noteMatch: RegExpExecArray, indices: number[][]) {
+  constructor(app: App, noteMatch: RegExpExecArray) {
     super();
     this.app = app;
     this.noteMatch = noteMatch;
-    this.indices = indices;
+    this.indices = (noteMatch as any).indices;
 
-    const { content, id } = getId(noteMatch[2]);
+    this.level = noteMatch[1].length;
 
-    this.isKeyWord = !content.endsWith(':');
-    const propsString = noteMatch[3];
-    this.isStudyable = propsString.split(';')[1] === 'true';
+    const { content, id } = getId(noteMatch[3]);
+    this.content = content;
+    this.id = id;
+
+    const propStrings = noteMatch[4].split(';');
+    this.study = propStrings[1] === 'true';
+    if (this.study) {
+      this.state = parseFloat(propStrings[9]);
+    }
   }
 
   toDOM(view: EditorView) {
-    const button = document.createElement('a');
-    button.textContent = this.isKeyWord ? "key word" : "relation";
-    if (this.id) button.textContent += ` (linked)`;
-    // if (this.id) button.textContent += ` (${this.id})`;
-    button.addClass(this.isKeyWord ? 'widget-note-keyword' : 'widget-note-relation');
-    button.addClass(this.isStudyable ? 'widget-note-study' : 'widget-note-nostudy');
-    button.onclick = () => {
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", 'svg');
+    icon.addClass("widget-node-icon");
+    icon.setAttributeNS(null, "viewBox", "0 0 24 24");
+    icon.setAttributeNS(null, "width", "24px");
+    icon.setAttributeNS(null, "height", "24px");
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+    circle.setAttributeNS(null, "cx", "12");
+    circle.setAttributeNS(null, "cy", "12");
+    circle.setAttributeNS(null, "r", this.study ? "12" : "3");
+    circle.setAttributeNS(null, "fill", colour(this.level));
+    // circle.setAttributeNS(null, "stroke", colour(this.level));
+    // circle.setAttributeNS(null, "stroke-width", this.study ? "2" : "0");
+    icon.appendChild(circle);
+    if (this.study) {
+      const innerCircle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
+      innerCircle.setAttributeNS(null, "cx", "12");
+      innerCircle.setAttributeNS(null, "cy", "12");
+      innerCircle.setAttributeNS(null, "r", "8");
+      innerCircle.setAttributeNS(null, "fill", cardStateColours[this.state]);
+      icon.appendChild(innerCircle);
+    }
+
+
+    const block = document.createElement('span');
+    block.addClass('widget-note');
+    block.addClass(this.study ? 'widget-note-study' : 'widget-note-nostudy');
+
+    block.appendChild(icon);
+    block.appendText(this.content ? this.content : "");
+    if (this.id == null) {
+      block.appendText("*");
+    } else if (this.id) {
+      const tag = document.createElement('span');
+      tag.addClass('cm-hashtag');
+      tag.textContent = "#" + this.id;
+      block.appendText(this.content ? " (" : "(");
+      block.appendChild(tag);
+      block.appendText(")");
+    }
+
+    block.onclick = () => {
       // console.log("NoteDataWidget() indices", this.indices);
       new NotePropertyEditorModal(this.app, view, this.noteMatch).open();
     };
-    return button;
+
+    return block;
   }
 
   ignoreEvent() {
@@ -119,7 +203,7 @@ class ErrorWidget extends WidgetType {
     warningMessage.addClass('widget-error-warning');
     warningMessage.textContent = " " + warningNames[this.warning] + " ";
 
-    const deleteButton = document.createElement('a')
+    const deleteButton = document.createElement('a');
     deleteButton.textContent = "delete";
     deleteButton.addClass('widget-error-delete');
     // deleteButton.onclick = this.deleteLine;
@@ -191,18 +275,24 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
           const noteRegex = RegExp(notePattern, 'dgm');
           // find every match in the full text
           while ((noteMatch = noteRegex.exec(text)) !== null) {
-            // console.log("View plugin: note match:", noteMatch[0]);
-            (noteMatch as any).indices.forEach((pair: number[], i: number, array: number[][]) => array[i] = [pair[0] + from, pair[1] + from]);
+            (noteMatch as any).indices.forEach(
+              (pair: number[], i: number, array: number[][]) => array[i] = [pair[0] + from, pair[1] + from]
+            );
             let indices: number[][] = (noteMatch as any).indices;
-            // indices = indices.map((pair) => [pair[0] + from, pair[1] + from]);
-            
-            const start = indices[3][0] - noteTagOpenLength;
-            const end = indices[3][1] + noteTagCloseLength;
+
+            const note = parseNote(noteMatch);
+            const study = note.props.study;
+            // node icon
+            // let iconDeco = Decoration.widget({
+            //   widget: new NodeIconWidget(study, noteMatch[1].length, study ? note.props.card!.state : null), 
+            // });
+            // decorations.push({ start: indices[2][1], end: indices[2][1], deco: iconDeco });
+
             const deco = Decoration.replace({
-              widget: new NoteDataWidget(plugin.app, noteMatch, indices),
+              widget: new NoteDataWidget(plugin.app, noteMatch),
               inclusive: false
             });
-            decorations.push({start, end, deco});
+            decorations.push({ start: indices[3][0], end: indices[0][1], deco });
           }
           
           let mapMatch;
