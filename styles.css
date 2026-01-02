@@ -12,9 +12,9 @@ If your plugin does not need CSS, delete this file.
 }
 
 .widget-node-icon {
-  width: 1em;
-  height: 1em;
-  vertical-align: -0.125em;
+  width: calc(1cap + 2px);
+  height: calc(1cap + 2px);
+  vertical-align: -0.0em;
   margin: 0 0.25em;
 }
 
@@ -98,7 +98,6 @@ If your plugin does not need CSS, delete this file.
 
 .mindmap-node-label {
   fill: white;
-  font-size: x-small;
-  background-color: rgba(0, 0, 0, 0.205);
-  text-shadow: black;
+  /* font-size: xx-small; */
+  text-shadow: 0px 0px 4px black;
 }

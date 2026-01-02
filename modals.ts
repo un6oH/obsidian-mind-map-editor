@@ -172,8 +172,10 @@ export class StudyMindMapModal extends Modal {
 			.setName("Separate headings")
 			.setDesc("Turn on to remove the centre node to create separate mind maps")
 			.addToggle((toggle) => toggle
-				.setValue(mindMap.map.settings.separateHeadings)
+				.setValue(false)
+				// .setValue(mindMap.map.settings.separateHeadings)
 				.onChange((value) => mindMap.map.settings.separateHeadings = value)
+				.setDisabled
 			);
 		new Setting(this.contentEl)
 			.setName("Crosslink")

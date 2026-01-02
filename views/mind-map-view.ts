@@ -22,6 +22,7 @@ const STROKE_DASHARRAYS = [
 
 interface Node extends d3.SimulationNodeDatum {
   id: string;
+  index: number;
   content: string;
   level: number;
   study: boolean;
@@ -77,6 +78,7 @@ export class MindMapView extends ItemView {
   marginBottom = 30;
   marginLeft = 40;
   stepsToAnneal: number;
+  fontSize = 14;
 
   settingsContainer: Element;
   studyButton: Element;
@@ -218,6 +220,7 @@ export class MindMapView extends ItemView {
     if (!mindMap.map.settings.separateHeadings) {
       centreNode = {
         id: this.mindMap.map.id, 
+        index: 0, 
         content: this.mindMap.map.title, 
         level: 0,
         study: false, 
@@ -309,28 +312,28 @@ export class MindMapView extends ItemView {
     for (let note of this.mindMap.notes) {
       let nodeId: string;
       const path = note.props.path;
-      let crosslink = false;
+      
       // check crosslinks
+      let newNode = true;
       if (note.id && this.mindMap.map.settings.crosslink) {
-        const groupIndex = groups.findIndex((group) => group.id === note.id)
+        const groupIndex = groups.findIndex((group) => group.id === note.id);
         const refIndex = groups[groupIndex].ref;
         const ref = this.mindMap.notes[refIndex];
         nodeId = toPathString(ref.props.path);
-        crosslink = refIndex != nodeIndex; // link goes to the reference node
+        newNode = refIndex == nodeIndex; // only make one new node per group
       } else {
         nodeId = toPathString(path);
       }
       nodeIndex++;
 
-      let level = 0; // key word depth of the node
-      level = path.length - 1;
-
+      let level = path.length - 1;
       let study = note.props.study;
 
-      if (!crosslink) { // only add nodes when note has content
+      if (newNode) { // only add unique nodes
         const node: Node = {
           id: nodeId, 
-          content: note.content,  
+          index: this.nodes.length, 
+          content: note.content, 
           level: level, 
           study, 
           centre: false, 
@@ -338,10 +341,10 @@ export class MindMapView extends ItemView {
           hasStudyableChildren: false, 
         };
         if (presetLayout) {
-          const nodeIndex = layout.ids.findIndex((value) => value === nodeId);
-          if (nodeIndex != -1) {
-            node.x = layout.xCoords[nodeIndex];
-            node.y = layout.yCoords[nodeIndex];
+          const index = layout.ids.findIndex((value) => value === nodeId);
+          if (index != -1) {
+            node.x = layout.xCoords[index];
+            node.y = layout.yCoords[index];
           }
         }
         this.nodes.push(node);
@@ -350,34 +353,39 @@ export class MindMapView extends ItemView {
       // separate headings
       if (mindMap.map.settings.separateHeadings && note.props.path.length == 1) continue;
 
-      // link node to source
       let listIndex = note.listIndex;
       let source = path.length == 1 ? centreNode!.id : toPathString(note.props.path.slice(0, -1));
-      const sourceIndex = this.nodes.findIndex((node) => node.id === source);
-      if (sourceIndex == -1) {
-        console.log("initialiseMindMap() link missing source node:", source, nodeId);
-      }
-      let depth = note.props.path.length;
       if (listIndex > 1) { // node in a chain
         let chainIndex = chains.findIndex((group) => group.origin === source);
         source = chains[chainIndex].nodes[listIndex - 2];
       }
       this.links.push({
         source, 
-        sourceIndex, 
+        sourceIndex: 0, 
         target: nodeId, 
-        targetIndex: nodeIndex - 1, 
-        level: listIndex > 1 ? level: level - 1, 
+        targetIndex: 0, 
+        level: listIndex > 1 ? level : level - 1, 
         card: study ? note.props.card : null, 
       });
-      this.nodes[sourceIndex].links.push(linkIndex);
       linkIndex++;
-      console.log(`created link ${source} -> ${nodeId}`);
     }
-    
-    for (let i = 0; i < this.nodes.length; i++) {
-      // links have studyable cards
-      this.nodes[i].hasStudyableChildren = this.nodes[i].links.map(i => this.links[i].card).filter(card => card).length != 0;
+    // console.log(this.nodes);
+    // console.log(this.links);
+
+    for (let i = 0; i < this.links.length; i++) {
+      const sourceId = this.links[i].source as string;
+      const sourceNode = this.nodes.find(node => node.id === sourceId);
+      const targetId = this.links[i].target as string;
+      const targetNode = this.nodes.find(node => node.id === targetId);
+      if (!sourceNode || !targetNode) {
+        console.log("initialiseMindMap() node(s) not found:", sourceId, targetId);
+        continue;
+      }
+
+      this.links[i].sourceIndex = sourceNode.index;
+      this.links[i].targetIndex = targetNode.index;
+      this.nodes[sourceNode.index].links.push(i);
+      if (this.links[i].card) this.nodes[sourceNode.index].hasStudyableChildren = true;
     }
   }
 
@@ -471,6 +479,7 @@ export class MindMapView extends ItemView {
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "central")
         .attr("pointer-events", "none")
+        .attr("font-size", "12px")
         .attr("class", "mindmap-node-label");
 
     this.zoom = d3.zoom<SVGSVGElement, unknown>()
@@ -543,6 +552,8 @@ export class MindMapView extends ItemView {
     this.node.attr("transform", transform);
     this.link.attr("transform", transform);
     this.label.attr("transform", transform);
+    const fontSize = this.fontSize / event.transform.k;
+    this.label.attr("font-size", `${fontSize}px`);
   }
 
   getNodes(node: Node, backDepth: number, forwardDepth: number): Node[] {
@@ -580,22 +591,59 @@ export class MindMapView extends ItemView {
     return nodes;
   }
 
+  getNodeIndices(index: number, backDepth: number, forwardDepth: number): number[] {
+    let indices: number[] = [];
+    let parentIndices: number[] = [index];
+    let childIndices: number[] = [index];
+
+    let startIndex = 0;
+    let newIndex = 0;
+    for (let d = 0; d < backDepth; d++) {
+      newIndex = parentIndices.length;
+      parentIndices.slice(startIndex).forEach((i) => {
+        const links = this.links.filter((link) => link.targetIndex === i);
+        parentIndices.push(...links.map((link) => link.sourceIndex));
+      });
+      startIndex = newIndex;
+    }
+    startIndex = 0;
+    for (let i = 0; i < forwardDepth; i++) {
+      newIndex = childIndices.length;
+      childIndices.slice(startIndex).forEach((i) => {
+        const links = this.links.filter((link) => link.sourceIndex === i);
+        childIndices.push(...links.map((link) => link.targetIndex));
+      });
+      startIndex = newIndex;
+    }
+    parentIndices.forEach((i) => {
+      if (!indices.contains(i)) indices.push(i);
+    });
+    childIndices.forEach((i) => {
+      if (!indices.contains(i)) indices.push(i);
+    });
+
+    return indices;
+  }
+
   focusNodes(node?: Node, backDepth?: number, forwardDepth?: number) {
     let nodes: Node[] = [];
+    let indices: number[] = [];
     let nodeIDs: string[] = [];
     backDepth = backDepth ? backDepth : 0;
     forwardDepth = forwardDepth ? forwardDepth : (backDepth ? backDepth : 0);
     if (node) {
-      nodes = this.getNodes(node, backDepth, forwardDepth);
-      nodeIDs = nodes.map((node) => node.id);
+      // nodes = this.getNodes(node, backDepth, forwardDepth);
+      // nodeIDs = nodes.map((node) => node.id);
+      indices = this.getNodeIndices(node.index, backDepth, forwardDepth);
+      nodes = this.nodes.filter(node => indices.contains(node.index));
       
-      this.node.attr('opacity', d => nodeIDs.contains(d.id) ? "100%" : "50%");
+      this.node.attr('opacity', d => indices.contains(d.index) ? "100%" : "50%");
       this.link.attr('opacity', d => {
-        const containsTarget = nodeIDs.contains((d.target as Node).id);
-        const containsSource = nodeIDs.contains((d.source as Node).id);
+        const containsTarget = indices.contains(d.targetIndex);
+        const containsSource = indices.contains(d.sourceIndex);
         return containsTarget && containsSource ? "100%" : "50%";
       });
-      this.label.attr('opacity', d => nodeIDs.contains(d.id) ? "100%" : "0%");
+      this.label.attr('opacity', d => indices.contains(d.index) ? "100%" : "0%");
     } else {
       this.node.attr('opacity', "100%",);
       this.link.attr('opacity', "100%");
