@@ -88,7 +88,6 @@ If your plugin does not need CSS, delete this file.
   width: calc(100% - 2 * var(--size-4-3));
   height: calc(100% - var(--size-4-3) - max(var(--safe-area-inset-bottom), var(--size-4-8)) - var(--header-height));
   position: absolute;
-  border: red 1px;
 }
 
 .mind-map-view-settings-container {
@@ -100,4 +99,8 @@ If your plugin does not need CSS, delete this file.
   fill: white;
   /* font-size: xx-small; */
   text-shadow: 0px 0px 4px black;
+}
+
+.mind-map-rating-interface {
+  position: relative;
 }

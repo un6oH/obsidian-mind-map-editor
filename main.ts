@@ -62,7 +62,7 @@ export default class MindMapEditorPlugin extends Plugin {
 			const editor = activeView!.editor;
 			const text = activeView!.editor.getRange(
 				{ line: 0, ch: 0 }, 
-				{ line: editor.lineCount() - 1, ch: editor.lastLine.length }
+				{ line: editor.lineCount(), ch: 0 }
 			);
 			const library = processDocument(editor.getDoc());
 			if (library.warningLines.length != 0) {

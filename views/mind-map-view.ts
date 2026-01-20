@@ -2,7 +2,7 @@ import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } fr
 import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
 import { toPathString, colour, cardStateColours } from 'helpers';
 import * as d3 from 'd3';
-import { Card, fsrs, FSRS, generatorParameters, RecordLog, State } from 'ts-fsrs';
+import { Card, fsrs, FSRS, generatorParameters, Rating, RecordLog, State } from 'ts-fsrs';
 
 export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.005;
@@ -29,6 +29,8 @@ interface Node extends d3.SimulationNodeDatum {
   centre: boolean;
   links: number[]; // indices of links from this node
   hasStudyableChildren: boolean;
+  selectable: boolean;
+  selected: boolean;
 }
 
 interface Link extends d3.SimulationLinkDatum<Node> {
@@ -48,6 +50,7 @@ interface Chain {
 enum ViewMode {
   Navigate, 
   Arrange,
+  Study, 
 };
 
 enum SearchType {
@@ -55,12 +58,14 @@ enum SearchType {
   BreadthFirst, 
 }
 
-const size = (level: number) => 4 + 6 / (level + 1);
+const size = (level: number) => 5 + 5 / (level + 1);
 
 export class MindMapView extends ItemView {
   mindMap: MindMap;
   nodes: Node[];
   links: Link[];
+  fsrs: FSRS;
+  interactableNodes: number[];
 
   graphContainer: Element;
   simulation: d3.Simulation<Node, Link>;
@@ -70,6 +75,7 @@ export class MindMapView extends ItemView {
   node: d3.Selection<SVGCircleElement, Node, SVGGElement, unknown>;
   label: d3.Selection<SVGTextElement, Node, SVGElement, unknown>;
   zoom: d3.ZoomBehavior<SVGSVGElement, unknown>;
+  ratingInterface: HTMLElement;
 
   width = 480;
   height = 360;
@@ -79,6 +85,11 @@ export class MindMapView extends ItemView {
   marginLeft = 40;
   stepsToAnneal: number;
   fontSize = 14;
+  transform: {
+    x: number, 
+    y: number, 
+    k: number, 
+  };
 
   settingsContainer: Element;
   studyButton: Element;
@@ -89,7 +100,7 @@ export class MindMapView extends ItemView {
   searchTypeButtonHandler: () => void;
 
   viewModeButton: Element;
-  viewMode = ViewMode.Navigate;
+  viewMode = ViewMode.Study;
   viewModeButtonHandler: () => void;
 
   simulationButton: Element;
@@ -99,11 +110,18 @@ export class MindMapView extends ItemView {
   createGraphButton: Element;
   createGraphButtonHandler: () => void;
 
+  currentParent: number;
+  nextNodeButton: Element;
+  nextNodeButtonHandler: () => void;
+
+  selectedNode: number;
+
   layout: MindMapLayout;
   saveProgressCallback: () => void;
   saveLayoutCallback: (layout: MindMapLayout) => void;
 
-  loaded = false;
+  initialised = false;
+  windowOpen = false;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -118,10 +136,6 @@ export class MindMapView extends ItemView {
   }
 
   async onOpen() {
-    this.mindMap = {} as MindMap;
-    this.nodes = [];
-    this.links = [];
-    
     this.graphContainer = document.createElement('div');
     this.graphContainer.addClass('mind-map-view-graph-container');
     this.settingsContainer = document.createElement('div');
@@ -138,7 +152,7 @@ export class MindMapView extends ItemView {
     this.searchTypeButton.addEventListener('click', this.searchTypeButtonHandler);
 
     this.viewModeButton = document.createElement('button');
-    this.viewModeButton.textContent = "Mode: Navigate";
+    this.viewModeButton.textContent = `Mode: ${ViewMode[this.viewMode]}`;
     this.viewModeButtonHandler = () => this.changeViewMode();
     this.viewModeButton.addEventListener('click', this.viewModeButtonHandler);
 
@@ -152,11 +166,42 @@ export class MindMapView extends ItemView {
     this.createGraphButtonHandler = () => this.createGraph();
     this.createGraphButton.addEventListener('click', this.createGraphButtonHandler);
 
+    this.nextNodeButton = document.createElement('button');
+    this.nextNodeButton.textContent = "Go to next node";
+    this.nextNodeButtonHandler = () => this.goToNextNode();
+    this.nextNodeButton.addEventListener('click', this.createGraphButtonHandler);
+
     const container = this.containerEl.children[1];
     container.addClass('mind-map-view-container');
     container.empty();
     container.appendChild(this.graphContainer);
     container.appendChild(this.settingsContainer);
+
+    this.ratingInterface = document.createElement('div');
+    this.ratingInterface.addClass("mind-map-rating-interface");
+    this.ratingInterface.style.left = "100px";
+    this.ratingInterface.style.top = "100px";
+    const againButton = document.createElement('button');
+    againButton.addClass("mind-map-rating-interface-again");
+    againButton.textContent = "Again";
+    againButton.addEventListener('click', () => this.handleRatingInput(Rating.Again));
+    const hardButton = document.createElement('button');
+    hardButton.addClass("mind-map-rating-interface-hard");
+    hardButton.textContent = "Hard";
+    hardButton.addEventListener('click', () => this.handleRatingInput(Rating.Hard));
+    const goodButton = document.createElement('button');
+    goodButton.addClass("mind-map-rating-interface-good");
+    goodButton.textContent = "Good";
+    goodButton.addEventListener('click', () => this.handleRatingInput(Rating.Good));
+    const easyButton = document.createElement('button');
+    easyButton.addClass("mind-map-rating-interface-easy");
+    easyButton.textContent = "Easy";
+    easyButton.addEventListener('click', () => this.handleRatingInput(Rating.Easy));
+    this.ratingInterface.appendChild(againButton);
+    this.ratingInterface.appendChild(hardButton);
+    this.ratingInterface.appendChild(goodButton);
+    this.ratingInterface.appendChild(easyButton);
+    container.appendChild(this.ratingInterface);
 
     const header = this.containerEl.querySelector(".view-header") as HTMLElement | null;
     if (header) {
@@ -169,6 +214,7 @@ export class MindMapView extends ItemView {
       actionsContainer.appendChild(this.viewModeButton);
       actionsContainer.appendChild(this.simulationButton);
       actionsContainer.appendChild(this.createGraphButton);
+      actionsContainer.appendChild(this.nextNodeButton);
     }
   }
 
@@ -183,32 +229,37 @@ export class MindMapView extends ItemView {
     this.simulationButton.remove();
     this.createGraphButton.removeEventListener('click', this.createGraphButtonHandler);
     this.createGraphButton.remove();
+    this.nextNodeButton.removeEventListener('click', this.nextNodeButtonHandler);
+    this.nextNodeButton.remove();
   }
 
   onResize() {
+    this.setZoom();
+  }
+
+  setZoom() {
     this.width = this.graphContainer.clientWidth;
     this.height = this.graphContainer.clientHeight;
     console.log("onResize()", this.width, this.height);
     this.svg.attr("viewBox", [-this.width / 2, -this.height / 2, this.width, this.height]);
     this.zoom = this.zoom.extent([[-this.width / 2, -this.height / 2], [this.width / 2, this.height / 2]]);
-    this.svg.call(this.zoom);
-
-    if (!this.loaded) {
-      this.focusNodes();
-      this.loaded = true;
-    }
+    this.focusNodes();
   }
 
   async loadGraph(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
     this.initialiseMindMap(mindMap, layout, saveProgressCallback, saveLayoutCallback);
     this.createGraph();
+    if (this.windowOpen) this.setZoom();
+    else this.windowOpen = true;
   }
 
   async initialiseMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
+    // console.log("initialiseMindMap() mindMap.notes:", mindMap.notes);
     this.mindMap = mindMap;
     this.layout = layout;
     this.saveProgressCallback = saveProgressCallback;
     this.saveLayoutCallback = saveLayoutCallback;
+    this.fsrs = fsrs(this.mindMap.map.settings.studySettings);
     
     const presetLayout = layout.ids.length != 0;
 
@@ -227,6 +278,8 @@ export class MindMapView extends ItemView {
         centre: true, 
         links: [], 
         hasStudyableChildren: false, 
+        selectable: false, 
+        selected: false, 
         x: 0, 
         y: 0, 
         fx: 0, 
@@ -323,6 +376,7 @@ export class MindMapView extends ItemView {
         newNode = refIndex == nodeIndex; // only make one new node per group
       } else {
         nodeId = toPathString(path);
+        if (!this.nodes.every((node) => node.id !== nodeId)) newNode = false;
       }
       nodeIndex++;
 
@@ -339,6 +393,8 @@ export class MindMapView extends ItemView {
           centre: false, 
           links: [], 
           hasStudyableChildren: false, 
+          selectable: false,
+          selected: false, 
         };
         if (presetLayout) {
           const index = layout.ids.findIndex((value) => value === nodeId);
@@ -393,6 +449,8 @@ export class MindMapView extends ItemView {
     const presetLayout = this.layout.ids.length != 0;
     console.log("MindMapView.createGraph(): preset layout:", presetLayout);
 
+    this.graphContainer.empty();
+
     this.simulation = d3.forceSimulation<Node>(this.nodes)
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).distance(0).strength(1))
       .force('charge', d3.forceManyBody().strength(-100).theta(0.9).distanceMax(100))
@@ -400,11 +458,9 @@ export class MindMapView extends ItemView {
       .alphaDecay(INITIAL_ALPHADECAY)
       .alphaMin(MIN_ALPHA)
       .on('tick', () => this.updateGraph());
-      
-    this.graphContainer.empty();
 
-    this.width = this.loaded ? this.graphContainer.clientWidth : 800;
-    this.height = this.loaded ? this.graphContainer.clientHeight : 600;
+    this.width = this.windowOpen ? this.graphContainer.clientWidth : 800;
+    this.height = this.windowOpen ? this.graphContainer.clientHeight : 600;
     this.svg = d3.select(this.graphContainer)
       .append("svg")
       .attr("width", "100%")
@@ -429,6 +485,7 @@ export class MindMapView extends ItemView {
         .attr('nodeId', d => d.id)
         .attr('fill', d => {
           if (!d.hasStudyableChildren) {
+            if (d.centre) return "grey";
             return colour(d.level);
           } else {
             const links = d.links.map(i => this.links[i]);
@@ -438,21 +495,16 @@ export class MindMapView extends ItemView {
         }) // to do: white when before review, filled in when reviewed
         // .attr('fill', d => d.centre ? 'gray' : d.study ? 'white' : colour(d.level)) // to do: white when before review, filled in when reviewed
         // .attr('fill', d => d.centre ? 'gray' : d.study ? 'white' : colour(d.level)) // to do: white when before review, filled in when reviewed
-        .attr('r', d => d.centre ? 10 : (d.hasStudyableChildren ? size(d.level) : 3))
+        .attr('r', d => d.centre ? 10 : (d.hasStudyableChildren ? size(d.level) : 5))
         .attr("stroke", d => d.centre ? 'white' : colour(d.level))
         .attr("stroke-width", 2)
-      .on('click', (event, d) => {
+      .on('click', (event: any, node: Node) => {
         event.stopPropagation();
-        if (this.viewMode == ViewMode.Arrange) return;
-        if (d.centre) {
-          this.focusNodes();
-          return;
-        }
-        this.focusNodes(d, 2, 2);
+        this.handleNodeClick(node);
       })
       .call(d3.drag<SVGCircleElement, Node>()
         .on('start', (event, d) => {
-            if (this.viewMode == ViewMode.Navigate) return;
+            if (this.viewMode != ViewMode.Arrange) return;
             if (d.centre) return;
             if (!event.active) this.simulation.alphaTarget(DRAG_ALPHA).alphaDecay(DRAG_ALPHADECAY).restart();
             d.fx = d.x ? d.x : null;
@@ -488,7 +540,43 @@ export class MindMapView extends ItemView {
       .on("zoom", (event) => this.zoomed(event));
     this.svg.call(this.zoom);
 
-    if (this.loaded) this.focusNodes();
+    this.selectedNode = 0;
+  }
+
+  handleNodeClick(node: Node) {
+    switch (this.viewMode) {
+      case ViewMode.Arrange: return;
+      case ViewMode.Navigate: 
+        console.log("handleNodeClick() navigate");
+        this.focusNodes(node, 2, 2);
+        break;
+      case ViewMode.Study:
+        console.log("handleNodeClick() Study");
+        this.studyNodeInteract(node);
+        // this.focusNodes(node, 2, 2);
+        break;
+    }
+  }
+
+  studyNodeInteract(node: Node) {
+    // check whether node is interactable
+    // if (this.interactableNodes.every(i => i != node.index)) {
+    //   console.log("studyNodeInteract() node not interactable");
+    //   return;
+    // }
+    this.selectedNode = node.index;
+    this.showRatingInterface(node);
+  }
+
+  showRatingInterface(node: Node) {
+    const x = node.x!;
+    const y = node.y!;
+    this.ratingInterface.style.left = (this.width / 2 + (x * this.transform.k) + this.transform.x).toString() + "px";
+    this.ratingInterface.style.top = (this.height / 2 + (y * this.transform.k) + this.transform.y).toString() + "px";
+  }
+
+  handleRatingInput(rating: Rating) {
+
   }
 
   updateGraph() {
@@ -548,12 +636,29 @@ export class MindMapView extends ItemView {
   }
 
   zoomed(event: d3.D3ZoomEvent<SVGSVGElement, unknown>) {
+    this.transform = {
+      x: event.transform.x, 
+      y: event.transform.y, 
+      k: event.transform.k, 
+    }
+    // console.log("zoomed() transform:", this.transform);
     const transform = event.transform.toString();
+    const translate = [event.transform.x, event.transform.y];
+    const k = event.transform.k;
     this.node.attr("transform", transform);
+    this.node
+      .attr('r', d => (d.centre ? 10 : (d.hasStudyableChildren ? size(d.level) : 5)) / k)
+      .attr("stroke-width", 2 / k);
     this.link.attr("transform", transform);
+    this.link.attr("stroke-width", 2 / k);
     this.label.attr("transform", transform);
-    const fontSize = this.fontSize / event.transform.k;
+    const fontSize = this.fontSize / k;
     this.label.attr("font-size", `${fontSize}px`);
+    const nodePosition = [this.nodes[this.selectedNode].x!, this.nodes[this.selectedNode].y!];
+    // this.ratingInterface.style.left = (this.width / 2 + nodePosition[0] / event.transform.k + translate[0]).toString() + "px";
+    // this.ratingInterface.style.top = (this.height / 2 + nodePosition[1] / event.transform.k + translate[1]).toString() + "px";
+    this.ratingInterface.style.left = (this.width / 2 + nodePosition[0] * k + translate[0]).toString() + "px";
+    this.ratingInterface.style.top = (this.height / 2 + nodePosition[1] * k + translate[1]).toString() + "px";
   }
 
   getNodes(node: Node, backDepth: number, forwardDepth: number): Node[] {
@@ -665,6 +770,7 @@ export class MindMapView extends ItemView {
     const transform = d3.zoomIdentity
         .scale(Math.min(Math.max(scaleF, SCALE_EXTENT[0]), SCALE_EXTENT[1]))
         .translate(-frameCentreX, -frameCentreY);
+    // console.log("focusNodes")
     this.svg.transition().duration(500).call(
       this.zoom.transform,
       transform, 
@@ -679,6 +785,10 @@ export class MindMapView extends ItemView {
         buttonText = "Mode: Navigate";
         break;
       case ViewMode.Navigate: 
+        this.viewMode = ViewMode.Study; 
+        buttonText = "Mode: Study";
+        break;
+      case ViewMode.Study: 
         this.viewMode = ViewMode.Arrange; 
         buttonText = "Mode: Arrange";
         break;
@@ -716,28 +826,16 @@ export class MindMapView extends ItemView {
   }
 
   goToNextNode() {
-    /**
-     * current position: number[]
-     * mode: depth-first | breadth-first
-     * 
-     * nextBreadthFirst(rootPosition, relPosition) => number[]:
-     *  
-     * 
-     * target = nextNode(currentPosition)
-     * 
-     * if depth-first:
-     *  children: position[]
-     *  for index of currentNode.children: 
-     *    children.push(position.concat(index))
-     *  for position of children:
-     *    if node at position has cards due:
-     *      target = node
-     *    else:
-     *      if node at positionOfParent has cards due:
-     *        target = node
-     *      
-     * 
-     * 
-     */
-  } 
+    this.nodes[this.currentParent]
+    const now = new Date();
+    const nodes = this.nodes.filter((node) => {
+      if (!node.hasStudyableChildren) return false;
+      let cards = node.links.map(i => this.links[i].card);
+      for (let card of cards) {
+        if (card && card.due < now) return true;
+      }
+    });
+    nodes.sort((a, b) => a.level - b.level);
+    
+  }
 }
