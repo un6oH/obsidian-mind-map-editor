@@ -97,10 +97,21 @@ If your plugin does not need CSS, delete this file.
 
 .mindmap-node-label {
   fill: white;
-  /* font-size: xx-small; */
   text-shadow: 0px 0px 4px black;
 }
 
-.mind-map-rating-interface {
+.mind-map-rating-interface-anchor {
   position: relative;
+}
+
+.mind-map-rating-interface {
+  position: absolute;
+  left: 0;
+  top: 1el;
+  transform: translateX(-50%);
+}
+
+.mind-map-rating-interface-button {
+  /* position: relative; */
+  margin: 0px 2px;
 }
