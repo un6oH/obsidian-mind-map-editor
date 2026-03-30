@@ -43,7 +43,7 @@ interface Link extends d3.SimulationLinkDatum<Node> {
   targetIndex: number;
   level: number;
   card: Card | null;
-  reviewed: boolean;
+  reviewed: boolean; // true if no card
 }
 
 interface Chain {
@@ -471,7 +471,7 @@ export class MindMapView extends ItemView {
 
       this.links[i].sourceIndex = sourceNode.index;
       this.links[i].targetIndex = targetNode.index;
-      this.links[i].originIndex = targetNode.originIndex;
+      this.links[i].originIndex = targetNode.listIndex ? targetNode.originIndex : sourceNode.index;
       this.nodes[sourceNode.index].links.push(i);
       if (this.links[i].card) this.nodes[sourceNode.index].hasStudyableChildren = true;
     }
@@ -732,11 +732,11 @@ export class MindMapView extends ItemView {
 
     this.node
       .attr("transform", transform)
-      .attr('r', d => nodeRadius(d) / k)
-      .attr("stroke-width", (d, i) => this.interactableNodes.contains(i) ? 2 / k : 0);
+      // .attr('r', d => nodeRadius(d) / k)
+      // .attr("stroke-width", (d, i) => this.interactableNodes.contains(i) ? 2 / k : 0);
     this.link
       .attr("transform", transform)
-      .attr("stroke-width", 2 / k);
+      // .attr("stroke-width", 2 / k);
     const fontSize = this.fontSize / k;
     this.label
       .attr("transform", transform)
@@ -785,28 +785,28 @@ export class MindMapView extends ItemView {
   }
 
   getNodeIndices(index: number, backDepth: number, forwardDepth: number): number[] {
-    let indices: number[] = [];
-    let parentIndices: number[] = [index];
-    let childIndices: number[] = [index];
+    let indices: number[] = []; // final list of indices
+    let parentIndices: number[] = [index]; // index of parent nodes, parents of parents, to back depth
+    let childIndices: number[] = [index]; // index of child nodes, children of children, to forward depth
 
-    let startIndex = 0;
+    let startIndex = 0; // start of index list to branch from
     let newIndex = 0;
     for (let d = 0; d < backDepth; d++) {
-      newIndex = parentIndices.length;
+      newIndex = parentIndices.length; 
       parentIndices.slice(startIndex).forEach((i) => {
-        const links = this.links.filter((link) => link.targetIndex == i/*  || this.nodes[link.sourceIndex].originIndex == this.nodes[link.targetIndex].originIndex */);
+        const links = this.links.filter((link) => link.targetIndex == i || this.nodes[i].originIndex == link.sourceIndex);
         parentIndices.push(...links.map((link) => link.sourceIndex));
       });
-      startIndex = newIndex;
+      startIndex = newIndex; // start from the new nodes next iteration
     }
     startIndex = 0;
-    for (let i = 0; i < forwardDepth; i++) {
+    for (let d = 0; d < forwardDepth; d++) {
       newIndex = childIndices.length;
       childIndices.slice(startIndex).forEach((i) => {
         const links = this.links.filter((link) => link.sourceIndex == i || this.nodes[link.targetIndex].originIndex == i);
         childIndices.push(...links.map((link) => link.targetIndex));
       });
-      startIndex = newIndex;
+      startIndex = newIndex; // start from the new nodes next iteration
     }
     parentIndices.forEach((i) => {
       if (!indices.contains(i)) indices.push(i);
@@ -814,7 +814,7 @@ export class MindMapView extends ItemView {
     childIndices.forEach((i) => {
       if (!indices.contains(i)) indices.push(i);
     });
-    // console.log("getNodeIndices() indices:", indices);
+    console.log("getNodeIndices() nodes:", indices.map(index => this.nodes[index]));
     return indices;
   }
 
@@ -827,16 +827,15 @@ export class MindMapView extends ItemView {
       indices = this.getNodeIndices(node.index, backDepth, forwardDepth);
       nodes = this.nodes.filter(node => indices.contains(node.index));
     
-
-      this.node.attr('opacity', d => indices.contains(d.index) ? "100%" : "50%");
+      this.node.attr('opacity', d => indices.contains(d.index) ? "100%" : "25%");
       this.link.attr('opacity', d => {
         const containsTarget = indices.contains(d.targetIndex);
         const containsSource = indices.contains(d.sourceIndex);
-        return containsTarget && containsSource ? "100%" : "50%";
+        return containsTarget && containsSource ? "100%" : "25%";
       });
       this.label.attr('opacity', d => indices.contains(d.index) ? "100%" : "0%");
     } else {
-      this.node.attr('opacity', "100%",);
+      this.node.attr('opacity', "100%");
       this.link.attr('opacity', "100%");
       this.label.attr('opacity', "100%");
       nodes = this.nodes;
@@ -939,11 +938,14 @@ export class MindMapView extends ItemView {
   setInteractable(parent: number) {
     const indices = this.getNodeIndices(parent, 0, 1);
     indices.shift();
-    const links = this.links.filter(link => indices.contains(link.targetIndex));
+    const links = this.links.filter(link => link.card).filter(link => link.sourceIndex == parent).filter(link => indices.contains(link.targetIndex));
+    console.log("setInteractable(): links:", links.map(link => link));
     this.interactableNodes = links.filter(link => !link.reviewed).map(link => link.targetIndex);
     this.interactableLinks = links.map(link => link.index);
     const interactable = this.node.filter((d, i) => this.interactableNodes.contains(i));
-    interactable.attr('stroke-width', 2 / this.transform.k);
+    // console.log('setInteractable(): interactable nodes:', interactable);
+    // interactable.attr('stroke-width', 2 / this.transform.k);
+    interactable.attr('stroke-width', 1);
   }
 
   updateDue() {
@@ -961,10 +963,13 @@ export class MindMapView extends ItemView {
       if (!node.hasStudyableChildren) return false;
       // all links with this node as the origin
       const links = this.links
-        .filter(link => this.nodes[link.targetIndex].originIndex == node.index);
+        .filter(link => link.originIndex == node.index)
+        .filter(link => link.card);
+      // console.log("goToNextNode() node:", node.content, "links:", links);
       for (let link of links) {
         if (!link.reviewed) return true;
       }
+      return false;
     });
     if (nodes.length == 0) {
       new Notice("No notes due", 0);
@@ -981,19 +986,20 @@ export class MindMapView extends ItemView {
           a.listIndex - b.listIndex :
           1
     );
+    // console.log("goToNextNode() all nodes:", nodes);
     const index = nodes[0].index;
     this.currentParent = index;
     this.setInteractable(index);
-    this.focusNodes(this.nodes[index], 2, 2);
+    this.focusNodes(this.nodes[index], 2, 1);
     console.log("goToNextNode() node:", this.nodes[index].content);
   }
 }
 
 function nodeRadius (node: Node) { 
   if (node.centre) {
-    return 10;
+    return 6;
   } else {
-    return 6 + 6 / (node.level + 1);
+    return 3 + 3 / (node.level + 1);
   }
 };
 
