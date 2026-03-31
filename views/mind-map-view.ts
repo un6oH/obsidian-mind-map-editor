@@ -11,7 +11,7 @@ const INITIAL_ALPHADECAY = 0.16
 const DRAG_ALPHA = MIN_ALPHA;
 const DRAG_ALPHADECAY = 0.30;
 const SCALE_EXTENT: [number, number] = [0.25, 4.0];
-const HFACTOR = 2;
+const HFACTOR = 1.5;
 
 const STROKE_DASHARRAYS = [
   "4 2", 
@@ -100,6 +100,7 @@ export class MindMapView extends ItemView {
   stepsToAnneal: number;
   fontSize = 14;
   transform: Transform;
+  viewStretch: 1;
 
   settingsContainer: Element;
   studyButton: Element;
@@ -539,10 +540,8 @@ export class MindMapView extends ItemView {
             if (this.viewMode != ViewMode.Arrange) return;
             if (d.centre) return;
             if (!event.active) this.simulation.alpha(DRAG_ALPHA).alphaDecay(0).restart();
-            console.log("drag start 1", d.fx);
             d.fx = d.x ? d.x : null;
             d.fy = d.y ? d.y : null;
-            console.log("drag start 2", d.fx);
         })
         .on('drag', (event, d) => {
             if (this.viewMode != ViewMode.Arrange) return;
@@ -550,10 +549,8 @@ export class MindMapView extends ItemView {
             const k = this.transform.k;
             d.fx = d.x! + event.dx / k / HFACTOR;
             d.fy = d.y! + event.dy / k;
-            // console.log("drag", d.fx);
         })
         .on('end', (event, d) => {
-            console.log("drag end");
             if (!event.active) this.simulation.alphaTarget(0).alphaDecay(DRAG_ALPHADECAY);
             d.fx = d.centre ? 0 : null;
             d.fy = d.centre ? 0 : null;
@@ -734,8 +731,9 @@ export class MindMapView extends ItemView {
       .attr("transform", transform)
       // .attr('r', d => nodeRadius(d) / k)
       // .attr("stroke-width", (d, i) => this.interactableNodes.contains(i) ? 2 / k : 0);
+      .attr("stroke-width", (d, i) => this.interactableNodes.contains(i) ? 1 : 0);
     this.link
-      .attr("transform", transform)
+      .attr("transform", transform);
       // .attr("stroke-width", 2 / k);
     const fontSize = this.fontSize / k;
     this.label
@@ -814,7 +812,7 @@ export class MindMapView extends ItemView {
     childIndices.forEach((i) => {
       if (!indices.contains(i)) indices.push(i);
     });
-    console.log("getNodeIndices() nodes:", indices.map(index => this.nodes[index]));
+    // console.log("getNodeIndices() nodes:", indices.map(index => this.nodes[index]));
     return indices;
   }
 
@@ -823,22 +821,14 @@ export class MindMapView extends ItemView {
     let indices: number[] = [];
     backDepth = backDepth ? backDepth : 0;
     forwardDepth = forwardDepth ? forwardDepth : (backDepth ? backDepth : 0);
+
     if (node) {
       indices = this.getNodeIndices(node.index, backDepth, forwardDepth);
       nodes = this.nodes.filter(node => indices.contains(node.index));
-    
-      this.node.attr('opacity', d => indices.contains(d.index) ? "100%" : "25%");
-      this.link.attr('opacity', d => {
-        const containsTarget = indices.contains(d.targetIndex);
-        const containsSource = indices.contains(d.sourceIndex);
-        return containsTarget && containsSource ? "100%" : "25%";
-      });
-      this.label.attr('opacity', d => indices.contains(d.index) ? "100%" : "0%");
+      this.updateVisibility(indices);
     } else {
-      this.node.attr('opacity', "100%");
-      this.link.attr('opacity', "100%");
-      this.label.attr('opacity', "100%");
       nodes = this.nodes;
+      this.updateVisibility();
     }
 
     const xCoords = nodes.map((node) => node.x! * HFACTOR);
@@ -860,6 +850,62 @@ export class MindMapView extends ItemView {
       this.zoom.transform,
       transform, 
     );
+  }
+
+  updateVisibility(nodeIndices?: number[]) {
+    if (!nodeIndices) {
+      this.node.attr('opacity', "100%");
+      this.link.attr('opacity', "100%");
+      this.label.attr('opacity', "100%");
+      return;
+    }
+
+    if (this.viewMode == ViewMode.Navigate) {
+      this.node.attr('opacity', d => nodeIndices.contains(d.index) ? "100%" : "25%");
+      this.link.attr('opacity', d => {
+        const containsTarget = nodeIndices.contains(d.targetIndex);
+        const containsSource = nodeIndices.contains(d.sourceIndex);
+        return containsTarget && containsSource ? "100%" : "25%";
+      });
+      this.label.attr('opacity', d => nodeIndices.contains(d.index) ? "100%" : "0%");
+    } else if (this.viewMode == ViewMode.Study) {
+      this.node.attr('opacity', d => {
+        if (nodeIndices.contains(d.index)) {
+          if (this.interactableNodes.contains(d.index) || nodeIndices[0] == d.index) {
+            return "100%";
+          } else {
+            return "50%";
+          }
+        } else {
+          return "25%";
+        }
+      });
+      this.link.attr('opacity', d => {
+        const containsTarget = nodeIndices.contains(d.targetIndex);
+        const containsSource = nodeIndices.contains(d.sourceIndex);
+        if (containsTarget && containsSource) {
+          if (this.interactableLinks.contains(d.index)) {
+            return "100%";
+          } else {
+            return "50%";
+          }
+        } else {
+          return "25%";
+        }
+      });
+      this.label.attr('opacity', d => {
+        if (nodeIndices.contains(d.index)) {
+          if (this.interactableNodes.contains(d.index) || nodeIndices[0] == d.index) {
+            return "100%";
+          } else {
+            return "50%";
+          }
+        } else {
+          return "0%";
+        }
+      });
+      // this.label.attr('opacity', d => nodeIndices.contains(d.index) ? "100%" : "0%");
+    }
   }
 
   changeViewMode(mode?: ViewMode) {
@@ -939,11 +985,11 @@ export class MindMapView extends ItemView {
     const indices = this.getNodeIndices(parent, 0, 1);
     indices.shift();
     const links = this.links.filter(link => link.card).filter(link => link.sourceIndex == parent).filter(link => indices.contains(link.targetIndex));
-    console.log("setInteractable(): links:", links.map(link => link));
+    // console.log("setInteractable(): links:", links.map(link => link));
     this.interactableNodes = links.filter(link => !link.reviewed).map(link => link.targetIndex);
     this.interactableLinks = links.map(link => link.index);
     const interactable = this.node.filter((d, i) => this.interactableNodes.contains(i));
-    // console.log('setInteractable(): interactable nodes:', interactable);
+    // console.log('setInteractable(): interactable nodes:', this.interactableNodes.map(index => this.nodes[index]));
     // interactable.attr('stroke-width', 2 / this.transform.k);
     interactable.attr('stroke-width', 1);
   }
