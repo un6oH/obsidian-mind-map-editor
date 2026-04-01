@@ -115,3 +115,23 @@ If your plugin does not need CSS, delete this file.
   /* position: relative; */
   margin: 0px 2px;
 }
+
+.mind-map-label-container {
+  position: relative;
+  color: white;
+  text-shadow: 0px 0px 4px black;
+}
+
+.mind-map-label-anchor {
+  position: relative;
+  width: 16em;
+}
+
+.mind-map-label {
+  position: absolute;
+  margin: 0 0;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  text-wrap: wrap;
+  line-height: 90%;
+}
