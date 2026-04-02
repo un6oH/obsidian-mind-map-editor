@@ -573,6 +573,7 @@ export class MindMapView extends ItemView {
         })
       );
 
+    this.labelContainer.empty();
     this.labels = [];
     this.labelAnchors = [];
     for (const node of this.nodes) {
