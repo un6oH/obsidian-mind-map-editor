@@ -21,8 +21,8 @@ export const mapTagClose = "%%";
 export const mapTagPattern = `${mapTagOpen}(.*?)${mapTagClose}`;
 export const mapTagRegex = RegExp(mapTagPattern, 'd');
 
-export const pastedImagePattern = "\!\[\[Pasted image (.*?)\.png\]\]";
-export const pastedImageRegex = RegExp(pastedImagePattern, 'd');
+export const imagePattern = "\!\[\[(.*?)\.png(\|\d+)*\]\]";
+export const imageRegex = RegExp(imagePattern, 'd');
 
 export const errorTagOpen = "%%error";
 export const errorTagClose = "%%";
@@ -131,7 +131,7 @@ export function parseNote(match: RegExpExecArray): Note {
 	note.content = content;
 	if (note.content.endsWith(':')) {
 		note.type = 'relation';
-	} else if (pastedImageRegex.exec(note.content)) {
+	} else if (imageRegex.exec(note.content)) {
 		note.type = 'image';
 	} else {
 		note.type = 'key word';
@@ -348,6 +348,57 @@ export function removeTags(text: string): string {
 		text = text.substring(0, errorTagMatch.indices[0][0]);
 	}
 	return text.trim();
+}
+
+interface TextFragment {
+	index: number, 
+	match: string,
+}
+enum FragmentStyles {
+	Normal, 
+	Cloze, 
+	Image, 
+}
+export function formatContent(text: string): { content: Element, hidden: Element } {
+  let match: RegExpExecArray | null;
+	
+	const imageRegex = new RegExp(imagePattern, 'g');
+	const images: TextFragment[] = [];
+	while ((match = imageRegex.exec(text)) !== null) {
+		images.push({
+			index: match.index, 
+			match: match[0],
+		});
+	}
+
+	const clozeRegex = /{(.*)}/g;
+	const clozes: TextFragment[] = [];
+	while ((match = clozeRegex.exec(text)) !== null) {
+		clozes.push({ index: match.index, match: match[0] });
+	}
+	if (clozes.length == 0) {
+		match = /: (.*)/.exec(text);
+		if (match) {
+			clozes.push({ index: match.index, match: match[1] });
+		}
+	}
+
+	const fragments: TextFragment[] = [];
+	fragments.push(...images);
+	fragments.push(...clozes);
+	fragments.sort((a, b) => a.index - b.index);
+	let i = 0;
+	while (i < text.length) {
+		let nextFragmentStart = 0;
+
+	}
+	
+  const content = document.createElement('span');
+  content.addClass("mind-map-label-content");
+  const hidden = document.createElement('span');
+  hidden.addClass("mind-map-label-hidden");
+
+  return { content, hidden };
 }
 
 export const COLOUR_DIVISIONS = 8;

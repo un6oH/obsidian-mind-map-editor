@@ -1,6 +1,6 @@
 import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
 import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
-import { toPathString, colour, cardStateColours } from 'helpers';
+import { toPathString, colour, cardStateColours, formatContent } from 'helpers';
 import * as d3 from 'd3';
 import { Card, fsrs, FSRS, generatorParameters, Grade, Grades, IPreview, Rating, RecordLog, show_diff_message, State } from 'ts-fsrs';
 
@@ -23,8 +23,8 @@ const STROKE_DASHARRAYS = [
 interface Node extends d3.SimulationNodeDatum {
   id: string;
   index: number;
-  content: string;
-  hidden: string;
+  content: Element;
+  hidden: Element;
   level: number;
   originIndex: number, 
   listIndex: number;
@@ -292,11 +292,13 @@ export class MindMapView extends ItemView {
     // add central node (title)
     let centreNode = {} as Node;
     if (!mindMap.map.settings.separateHeadings) {
+      let content = document.createEl('span', { text: this.mindMap.map.title, cls: "mind-map-label-title"});
+      let hidden = document.createEl('span', { text: "", cls: "mind-map-label-hidden" });
       centreNode = {
         id: this.mindMap.map.id, 
         index: 0, 
-        content: this.mindMap.map.title, 
-        hidden: "", 
+        content, 
+        hidden, 
         level: 0,
         originIndex: -1, 
         listIndex: 0, 
@@ -421,7 +423,7 @@ export class MindMapView extends ItemView {
         const node: Node = {
           id: nodeId, 
           index: this.nodes.length, 
-          content: note.content, 
+          content, 
           hidden,
           level, 
           originIndex: -1, 
@@ -503,10 +505,15 @@ export class MindMapView extends ItemView {
     this.graphContainer.appendChild(this.labelContainer);
     this.graphContainer.appendChild(this.ratingInterfaceAnchor);
 
+    const defaultLinkStrength = d3.forceLink<Node, Link>(this.links).id(d => d.id).strength();
+    const linkStrength = (link: Link, i: number, links: Link[]) => defaultLinkStrength(link, i, links) / Math.max(link.level, 1);
+
     this.simulation = d3.forceSimulation<Node>(this.nodes)
       // .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).distance(0).strength(1))
-      .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).strength(0.5))
-      .force('charge', d3.forceManyBody().strength(-100).theta(0.9).distanceMax(100))
+      .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).strength(linkStrength))
+      // .force('link', (link, i, links) => { return strengthFunction(link, i, links) / link.level })
+      // .force('charge', d3.forceManyBody().strength(-10).theta(0.9).distanceMax(100))
+      .force('charge', d3.forceManyBody().strength(-100).distanceMax(200))
       .alpha(presetLayout ? 0 : INITIAL_ALPHA)
       .alphaDecay(INITIAL_ALPHADECAY)
       .alphaMin(MIN_ALPHA)
@@ -579,10 +586,11 @@ export class MindMapView extends ItemView {
     for (const node of this.nodes) {
       const anchor = document.createElement('div');
       anchor.addClass("mind-map-label-anchor");
-      const label = document.createElement('p');
+      const label = document.createElement('span');
       label.addClass("mind-map-label");
-      label.textContent = node.content;
-      anchor.style.width = `${Math.sqrt(node.content.length) * 1.5}em`;
+      label.append(node.content);
+      // label.textContent = node.content;
+      anchor.style.width = `${Math.sqrt(node.content.textContent.length) * 1.5}em`;
       anchor.appendChild(label);
       this.labels.push(label);
       this.labelAnchors.push(anchor);
@@ -643,7 +651,7 @@ export class MindMapView extends ItemView {
 
     const nodeSvg = this.node.filter((_, i) => i == node.index);
     nodeSvg.attr('stroke-width', 0);
-    this.labels[node.index].textContent = node.content;
+    this.labels[node.index].show();
     this.showRatingInterface(event, node);
   }
 
@@ -984,10 +992,10 @@ export class MindMapView extends ItemView {
       this.labels.forEach((label, i) => {
         const node = this.nodes[i];
         const text = hiddenNodes[i] ? node.hidden : node.content;
-        label.textContent = text;
-      })
+        label.replaceChildren(hiddenNodes[i] ? node.hidden : node.content);
+      });
     } else {
-      this.labels.forEach((label, i) => label.textContent = this.nodes[i].content);
+      this.labels.forEach((label, i) => label.replaceChildren(this.nodes[i].content));
     }
   }
 
@@ -1116,12 +1124,7 @@ function linkStrokeDasharray(mode: ViewMode, link: Link): string {
   return "";
 }
 
-function formatContent(text: string): { content: string, hidden: string } {
-  return {
-    content: "", 
-    hidden: ""
-  };
-}
+
 
 function textWrap(docClass: string, text: string, aspect: number) { // aspect = width / height
   
