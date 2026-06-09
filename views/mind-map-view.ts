@@ -7,11 +7,11 @@ import { Card, fsrs, FSRS, generatorParameters, Grade, Grades, IPreview, Rating,
 export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.005;
 const INITIAL_ALPHA = 0.5;
-const INITIAL_ALPHADECAY = 0.16
-const DRAG_ALPHA = MIN_ALPHA;
-const DRAG_ALPHADECAY = 0.30;
+const INITIAL_ALPHADECAY = 0.05;
+const DRAG_ALPHA = INITIAL_ALPHA;
+const DRAG_ALPHADECAY = 0.02;
 const SCALE_EXTENT: [number, number] = [0.25, 4.0];
-const HFACTOR = 1.5;
+const xStretch = 1.5;
 
 const STROKE_DASHARRAYS = [
   "4 2", 
@@ -25,6 +25,7 @@ interface Node extends d3.SimulationNodeDatum {
   index: number;
   content: Element;
   hidden: Element;
+  collideRadius: number;
   level: number;
   originIndex: number, 
   listIndex: number;
@@ -69,30 +70,31 @@ interface Transform {
 }
 
 export class MindMapView extends ItemView {
-  mindMap: MindMap;
-  nodes: Node[];
-  links: Link[];
+  mindMap: MindMap = {} as MindMap;
+  nodes: Node[] = [];
+  links: Link[] = [];
   interactableNodes: number[] = [];
   interactableLinks: number[] = [];
   
-  fsrs: FSRS;
-  now: Date;
-  cardPreview: IPreview;
+  fsrs: FSRS = {} as FSRS;
+  now: Date = new Date();
+  cardPreview: IPreview = {} as IPreview;
 
-  graphContainer: Element;
-  simulation: d3.Simulation<Node, Link>;
-  svg: d3.Selection<SVGSVGElement, unknown, null, undefined>;
-  g: d3.Selection<SVGGElement, unknown, null, undefined>;
-  link: d3.Selection<SVGLineElement, Link, SVGGElement, unknown>;
-  node: d3.Selection<SVGCircleElement, Node, SVGGElement, unknown>;
-  label: d3.Selection<SVGTextElement, Node, SVGElement, unknown>;
-  zoom: d3.ZoomBehavior<SVGSVGElement, unknown>;
-  ratingInterfaceAnchor: HTMLElement;
-  ratingInterface: HTMLElement;
-  ratingButtons: Element[];
-  labels: HTMLElement[];
-  labelContainer: HTMLElement;
-  labelAnchors: HTMLElement[];
+  graphContainer: Element = {} as Element;
+  simulation: d3.Simulation<Node, Link> = {} as d3.Simulation<Node, Link>;
+  svg: d3.Selection<SVGSVGElement, unknown, null, undefined> = {} as d3.Selection<SVGSVGElement, unknown, null, undefined>;
+  g: d3.Selection<SVGGElement, unknown, null, undefined> = {} as d3.Selection<SVGGElement, unknown, null, undefined>;
+  link: d3.Selection<SVGLineElement, Link, SVGGElement, unknown> = {} as d3.Selection<SVGLineElement, Link, SVGGElement, unknown>;
+  node: d3.Selection<SVGCircleElement, Node, SVGGElement, unknown> = {} as d3.Selection<SVGCircleElement, Node, SVGGElement, unknown>;
+  label: d3.Selection<SVGTextElement, Node, SVGElement, unknown> = {} as d3.Selection<SVGTextElement, Node, SVGElement, unknown>;
+  zoom: d3.ZoomBehavior<SVGSVGElement, unknown> = {} as d3.ZoomBehavior<SVGSVGElement, unknown>;
+  ratingInterfaceAnchor: HTMLElement = {} as HTMLElement;
+  ratingInterface: HTMLElement = {} as HTMLElement;
+  ratingInterfaceOffset = 0; // amount to lower interface to show the content
+  ratingButtons: Element[] = [];
+  labels: HTMLElement[] = [];
+  labelContainer: HTMLElement = {} as HTMLElement;
+  labelAnchors: HTMLElement[] = [];
 
   width = 480;
   height = 360;
@@ -100,44 +102,50 @@ export class MindMapView extends ItemView {
   marginRight = 20;
   marginBottom = 30;
   marginLeft = 40;
-  stepsToAnneal: number;
-  fontSize = 14;
+  stepsToAnneal: number = 0;
+  minFontSize = 14;
+  maxFontScale = 1.5;
   transform: Transform = {
     x: 0,
     y: 0, 
     k: 1, 
   };
-  viewStretch: 1;
+  viewStretch = 1;
 
-  settingsContainer: Element;
-  studyButton: Element;
-  studyButtonHandler: () => void;
+  settingsContainer: Element = {} as Element;
+
+  studyButton: Element = {} as Element;
+  studyButtonHandler: () => void = () => {};
 
   searchType = SearchType.DepthFirst;
-  searchTypeButton: Element;
-  searchTypeButtonHandler: () => void;
+  searchTypeButton: Element = {} as Element;
+  searchTypeButtonHandler = () => this.changeSearchType();
 
-  viewModeButton: Element;
+  viewModeButton: Element = {} as Element;
   viewMode = ViewMode.Navigate;
-  viewModeButtonHandler: () => void;
+  viewModeButtonHandler = () => this.changeViewMode();
 
-  simulationButton: Element;
+  simulationButton: Element = {} as Element;
   simulationRunning = false;
-  simulationButtonHandler: () => void;
+  simulationButtonHandler = () => this.toggleSimulation();
 
-  createGraphButton: Element;
-  createGraphButtonHandler: () => void;
+  createGraphButton: Element = {} as Element;
+  createGraphButtonHandler = () => this.createGraph();
 
-  currentParent: number;
-  nextNodeButton: Element;
-  nextNodeButtonHandler: () => void;
+  currentParent: number = 0;
+  nextNodeButton: Element = {} as Element;
+  nextNodeButtonHandler = () => {};
 
-  selectedNode: number | null;
-  selectedLinkIndex: number | null;
+  showLabels = true;
+  toggleLabelButton: Element = {} as Element;
+  toggleLabelButtonHandler = () => this.toggleLabels();
 
-  layout: MindMapLayout;
-  saveProgressCallback: () => void;
-  saveLayoutCallback: (layout: MindMapLayout) => void;
+  selectedNode: number | null = null;
+  selectedLinkIndex: number | null = null;
+
+  layout: MindMapLayout = {} as MindMapLayout;
+  saveProgressCallback = () => {};
+  saveLayoutCallback = (layout: MindMapLayout) => {};
 
   sized = true;
 
@@ -161,27 +169,22 @@ export class MindMapView extends ItemView {
 
     this.studyButton = document.createElement('button');
     this.studyButton.textContent = "Study";
-    // this.studyButtonHandler = () => this.generateSchedule();
     this.studyButton.addEventListener('click', this.studyButtonHandler);
 
     this.searchTypeButton = document.createElement('button');
     this.searchTypeButton.textContent = "Search type: Depth-first";
-    this.searchTypeButtonHandler = () => this.changeSearchType();
     this.searchTypeButton.addEventListener('click', this.searchTypeButtonHandler);
 
     this.viewModeButton = document.createElement('button');
     this.viewModeButton.textContent = `Mode: ${ViewMode[this.viewMode]}`;
-    this.viewModeButtonHandler = () => this.changeViewMode();
     this.viewModeButton.addEventListener('click', this.viewModeButtonHandler);
 
     this.simulationButton = document.createElement('button');
     this.simulationButton.textContent = "Run simulation";
-    this.simulationButtonHandler = () => this.toggleSimulation();
     this.simulationButton.addEventListener('click', this.simulationButtonHandler);
 
     this.createGraphButton = document.createElement('button');
     this.createGraphButton.textContent = "Create graph";
-    this.createGraphButtonHandler = () => this.createGraph();
     this.createGraphButton.addEventListener('click', this.createGraphButtonHandler);
 
     this.nextNodeButton = document.createElement('button');
@@ -191,6 +194,10 @@ export class MindMapView extends ItemView {
       this.goToNextNode()
     };
     this.nextNodeButton.addEventListener('click', this.nextNodeButtonHandler);
+
+    this.toggleLabelButton = document.createElement('button');
+    this.toggleLabelButton.textContent = "Hide labels";
+    this.toggleLabelButton.addEventListener('click', this.toggleLabelButtonHandler);
 
     this.ratingInterfaceAnchor = document.createElement('div');
     this.ratingInterfaceAnchor.addClass('mind-map-rating-interface-anchor');
@@ -220,6 +227,8 @@ export class MindMapView extends ItemView {
     container.empty();
     container.appendChild(this.graphContainer);
     container.appendChild(this.settingsContainer);
+    
+    // (container as HTMLElement).focus();
 
     const header = this.containerEl.querySelector(".view-header") as HTMLElement | null;
     if (header) {
@@ -227,13 +236,22 @@ export class MindMapView extends ItemView {
         header.querySelector(".view-actions") ||
         header.querySelector(".view-header-actions") ||
         header;
-      actionsContainer.appendChild(this.studyButton);
+      // actionsContainer.appendChild(this.studyButton);
       actionsContainer.appendChild(this.searchTypeButton);
       actionsContainer.appendChild(this.viewModeButton);
       actionsContainer.appendChild(this.simulationButton);
       actionsContainer.appendChild(this.createGraphButton);
-      actionsContainer.appendChild(this.nextNodeButton);
+      // actionsContainer.appendChild(this.nextNodeButton);
+      actionsContainer.appendChild(this.toggleLabelButton);
     }
+
+    // this.containerEl.addEventListener('keypress', this.keyPressHandler);
+    // this.containerEl.setAttribute('tabindex', '0');
+    // this.containerEl.focus();
+    container.setAttribute('tabindex', '0');
+    (container as HTMLElement).focus();
+    this.registerDomEvent(container as HTMLElement, 'keypress', (ev: KeyboardEvent) => this.keyPressHandler(ev));
+    this.registerDomEvent(window, 'keypress', (ev: KeyboardEvent) => this.keyPressHandler(ev));
   }
 
   async onClose() {
@@ -249,6 +267,43 @@ export class MindMapView extends ItemView {
     this.createGraphButton.remove();
     this.nextNodeButton.removeEventListener('click', this.nextNodeButtonHandler);
     this.nextNodeButton.remove();
+    this.simulation.stop();
+  }
+
+  keyPressHandler(event: KeyboardEvent) {
+    console.log("keyPressHandler()");
+    switch (event.key) {
+      case '[':
+        this.minFontSize = Math.max(6, this.minFontSize - 2);
+        this.nodes.forEach(node => {
+          this.labelAnchors[node.index].style.fontSize = fontSize(this.minFontSize * this.transform.k, this.minFontSize * this.maxFontScale * this.transform.k, node.level);
+        });
+        console.log("minFontSize:", this.minFontSize);
+        break;
+      case ']':
+        this.minFontSize += 2;
+        this.nodes.forEach(node => this.labelAnchors[node.index].style.fontSize = fontSize(this.minFontSize * this.transform.k, this.minFontSize * this.maxFontScale * this.transform.k, node.level));
+        console.log("minFontSize:", this.minFontSize);
+        break;
+    }
+    
+    if (this.selectedNode) {
+      switch (event.key) {
+        case '1':
+          this.handleRatingInput(Rating.Again);
+          break;
+        case '2':
+          this.handleRatingInput(Rating.Hard);
+          break;
+        case ' ':
+        case '3':
+          this.handleRatingInput(Rating.Good);
+          break;
+        case '4':
+          this.handleRatingInput(Rating.Easy);
+          break;
+      }
+    }
   }
 
   onResize() {
@@ -265,7 +320,7 @@ export class MindMapView extends ItemView {
   }
 
   async loadGraph(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
-    this.initialiseMindMap(mindMap, layout, saveProgressCallback, saveLayoutCallback);
+    this.loadMindMap(mindMap, layout, saveProgressCallback, saveLayoutCallback);
     this.createGraph();
     console.log("loadGraph() sized:", this.sized);
     if (!this.sized) {
@@ -275,7 +330,7 @@ export class MindMapView extends ItemView {
     }
   }
 
-  async initialiseMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
+  async loadMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
     // console.log("initialiseMindMap() mindMap.notes:", mindMap.notes);
     this.mindMap = mindMap;
     this.layout = layout;
@@ -292,13 +347,16 @@ export class MindMapView extends ItemView {
     // add central node (title)
     let centreNode = {} as Node;
     if (!mindMap.map.settings.separateHeadings) {
-      let content = document.createEl('span', { text: this.mindMap.map.title, cls: "mind-map-label-title"});
-      let hidden = document.createEl('span', { text: "", cls: "mind-map-label-hidden" });
+      let content = document.createElement('span');
+      content.textContent = this.mindMap.map.title;
+      // console.log("centre node content:", content);
+      content.addClass('mind-map-label-title');
       centreNode = {
         id: this.mindMap.map.id, 
         index: 0, 
         content, 
-        hidden, 
+        hidden: content, 
+        collideRadius: Math.sqrt(this.mindMap.map.title.length), 
         level: 0,
         originIndex: -1, 
         listIndex: 0, 
@@ -419,12 +477,14 @@ export class MindMapView extends ItemView {
       }
 
       if (newNode) { // only add unique nodes
-        const {content, hidden} = formatContent(note.content);
+        const {content, hidden} = formatContent(document, note.content, this.viewImage);
+        // console.log(note.content, content, hidden);
         const node: Node = {
           id: nodeId, 
           index: this.nodes.length, 
           content, 
           hidden,
+          collideRadius: collideRadius(note.content), 
           level, 
           originIndex: -1, 
           listIndex, 
@@ -505,19 +565,17 @@ export class MindMapView extends ItemView {
     this.graphContainer.appendChild(this.labelContainer);
     this.graphContainer.appendChild(this.ratingInterfaceAnchor);
 
-    const defaultLinkStrength = d3.forceLink<Node, Link>(this.links).id(d => d.id).strength();
-    const linkStrength = (link: Link, i: number, links: Link[]) => defaultLinkStrength(link, i, links) / Math.max(link.level, 1);
-
     this.simulation = d3.forceSimulation<Node>(this.nodes)
-      // .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).distance(0).strength(1))
-      .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).strength(linkStrength))
-      // .force('link', (link, i, links) => { return strengthFunction(link, i, links) / link.level })
-      // .force('charge', d3.forceManyBody().strength(-10).theta(0.9).distanceMax(100))
-      .force('charge', d3.forceManyBody().strength(-100).distanceMax(200))
+      // .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
+      .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).strength(0.2))
+      .force('collide', d3.forceCollide().radius(d => (d as Node).collideRadius * this.minFontSize * 0.75).strength(0.05))
+      .force('center', d3.forceCenter().strength(this.mindMap.map.settings.separateHeadings ? 1 : 0))
+      .force('charge', d3.forceManyBody().strength(-30).distanceMin(120))
       .alpha(presetLayout ? 0 : INITIAL_ALPHA)
       .alphaDecay(INITIAL_ALPHADECAY)
       .alphaMin(MIN_ALPHA)
       .on('tick', () => this.updateGraph());
+    // this.simulation.stop();
 
     this.width = this.sized ? this.graphContainer.clientWidth : 800;
     this.height = this.sized ? this.graphContainer.clientHeight : 600;
@@ -547,10 +605,7 @@ export class MindMapView extends ItemView {
       .join('circle')
         .attr('id', d => d.id)
         .attr('nodeIndex', d => d.index)
-        .attr('fill', d => nodeFill(this.viewMode, d, this.links)) // to do: white when before review, filled in when reviewed
-        // .attr('fill', d => d.centre ? 'gray' : d.study ? 'white' : colour(d.level)) // to do: white when before review, filled in when reviewed
-        // .attr('fill', d => d.centre ? 'gray' : d.study ? 'white' : colour(d.level)) // to do: white when before review, filled in when reviewed
-        // .attr('r', d => d.centre ? 10 : (d.hasStudyableChildren ? size(d.level) : 5))
+        .attr('fill', d => nodeFill(this.viewMode, d, this.links))
         .attr('r', d => nodeRadius(d))
         .attr("stroke", "white")
         .attr("stroke-width", 0)
@@ -570,7 +625,7 @@ export class MindMapView extends ItemView {
             if (this.viewMode != ViewMode.Arrange) return;
             if (d.centre) return;
             const k = this.transform.k;
-            d.fx = d.x! + event.dx / k / HFACTOR;
+            d.fx = d.x! + event.dx / k / xStretch;
             d.fy = d.y! + event.dy / k;
         })
         .on('end', (event, d) => {
@@ -590,7 +645,9 @@ export class MindMapView extends ItemView {
       label.addClass("mind-map-label");
       label.append(node.content);
       // label.textContent = node.content;
-      anchor.style.width = `${Math.sqrt(node.content.textContent.length) * 1.5}em`;
+      anchor.style.fontSize = fontSize(this.minFontSize, this.minFontSize * this.maxFontScale, node.level);
+      // anchor.style.width = `${Math.sqrt(node.content.textContent.length) * 1.33}em`;
+      anchor.style.width = `${Math.sqrt(node.content.textContent.length) * xStretch}em`;
       anchor.appendChild(label);
       this.labels.push(label);
       this.labelAnchors.push(anchor);
@@ -611,6 +668,9 @@ export class MindMapView extends ItemView {
   }
 
   handleNodeClick(event: any, node: Node) {
+    const clickedLabel = this.labels[node.index].cloneNode(true);
+    // console.log("clicked node label:", clickedLabel);
+    // console.log("clicked node label now:", this.labels[node.index]);
     switch (this.viewMode) {
       case ViewMode.Arrange: 
         break;
@@ -651,18 +711,19 @@ export class MindMapView extends ItemView {
 
     const nodeSvg = this.node.filter((_, i) => i == node.index);
     nodeSvg.attr('stroke-width', 0);
-    this.labels[node.index].show();
+    // this.labels[node.index].show();
+    this.labels[node.index].replaceChildren(node.content);
     this.showRatingInterface(event, node);
   }
 
   showRatingInterface(event: any, node: Node) {
-    const x = node.x! * HFACTOR;
+    const x = node.x! * xStretch;
     const y = node.y!;
+    this.ratingInterfaceOffset = this.labels[node.index].clientHeight / 2 + 10;
+    console.log("showRatingInterface() offset:", this.ratingInterfaceOffset);
     this.ratingInterface.show();
     this.ratingInterfaceAnchor.style.left = (this.width / 2 + (x * this.transform.k) + this.transform.x).toString() + "px";
-    this.ratingInterfaceAnchor.style.top = (this.height / 2 + (y * this.transform.k) + this.transform.y).toString() + "px";
-    // this.ratingInterfaceAnchor.style.left = event.clientX.toString() + "px";
-    // this.ratingInterfaceAnchor.style.top = event.clientY.toString() + "px";
+    this.ratingInterfaceAnchor.style.top = (this.height / 2 + (y * this.transform.k) + this.transform.y + this.ratingInterfaceOffset).toString() + "px";
     let i = 0;
     for (const item of this.cardPreview) {
       const card = item.card;
@@ -680,7 +741,14 @@ export class MindMapView extends ItemView {
 
   handleRatingInput(grade: Grade) {
     this.links[this.selectedLinkIndex!].card = this.cardPreview[grade].card;
-    console.log(`handleRatingInput() ${this.links[this.selectedLinkIndex!].source} -> ${this.links[this.selectedLinkIndex!].target}; new card:`, this.links[this.selectedLinkIndex!].card);
+    // console.log(`handleRatingInput() ${this.links[this.selectedLinkIndex!].source} -> ${this.links[this.selectedLinkIndex!].target}; new card:`, this.links[this.selectedLinkIndex!].card);
+    console.log(
+      "handleRatingInput() studied:", 
+      this.links[this.selectedLinkIndex!].source, "->", this.links[this.selectedLinkIndex!].target, 
+      "rating:", grade, "\n", 
+      "new card:", 
+      this.links[this.selectedLinkIndex!].card
+    );
     this.deselect();
     if (this.interactableNodes.length == 0) this.goToNextNode();
   }
@@ -691,34 +759,27 @@ export class MindMapView extends ItemView {
       this.simulation.alphaTarget(INITIAL_ALPHA);
     }
     // Update positions on each tick
-    this.simulation.nodes(this.nodes);
-    (this.simulation.force('link') as d3.ForceLink<Node, Link>).links(this.links);
+    // this.simulation.nodes(this.nodes);
+    // (this.simulation.force('link') as d3.ForceLink<Node, Link>).links(this.links);
 
     this.link
-      .attr('x1', d => (d.source as Node).x! * HFACTOR)
+      .attr('x1', d => (d.source as Node).x! * xStretch)
       .attr('y1', d => (d.source as Node).y!)
-      .attr('x2', d => (d.target as Node).x! * HFACTOR)
+      .attr('x2', d => (d.target as Node).x! * xStretch)
       .attr('y2', d => (d.target as Node).y!);
 
     this.node
-      .attr('cx', d => d.x! * HFACTOR)
+      .attr('cx', d => d.x! * xStretch)
       .attr('cy', d => d.y!)
       .each((d, i) => {
         const k = this.transform.k;
-        const tx = d.x! * HFACTOR * k;
+        const tx = d.x! * xStretch * k;
         const ty = d.y! * k;
         this.labelAnchors[i].style.left = tx.toString() + "px";
         this.labelAnchors[i].style.top = ty + "px";
       });
     
-    let alpha = this.simulation.alpha();
-    if (alpha < MIN_ALPHA) {
-      // console.log("MindMapView.updateGraph(): graph settled in", this.stepsToAnneal, "steps");
-      // this.stepsToAnneal = 0;
-      this.saveLayout();
-    } else {
-      // this.stepsToAnneal++;
-    }
+    if (this.simulation.alpha() < MIN_ALPHA) this.saveLayout();
   }
 
   saveLayout() {
@@ -761,23 +822,23 @@ export class MindMapView extends ItemView {
       .attr("transform", transform)
       // .attr('r', d => nodeRadius(d) / k)
       // .attr("stroke-width", (d, i) => this.interactableNodes.contains(i) ? 2 / k : 0);
-      .attr("stroke-width", (d, i) => this.interactableNodes.contains(i) ? 1 : 0)
+      .attr("stroke-width", (d, i) => /* this.interactableNodes.contains(i) ? 1 : */ 0)
       .each((d, i) => {
-        const tx = d.x! * HFACTOR * k;
+        const tx = d.x! * xStretch * k;
         const ty = d.y! * k;
         this.labelAnchors[i].style.left = tx.toString() + "px";
         this.labelAnchors[i].style.top = ty + "px";
+        this.labelAnchors[i].style.fontSize = fontSize(this.minFontSize * k, this.minFontSize * this.maxFontScale * k, d.level);
       });
       
     this.link
       .attr("transform", transform);
       // .attr("stroke-width", 2 / k);
-    const fontSize = this.fontSize / k;
 
     if (this.selectedNode) {
       const nodePosition = [this.nodes[this.selectedNode].x!, this.nodes[this.selectedNode].y!];
-      this.ratingInterfaceAnchor.style.left = (this.width / 2 + (nodePosition[0] * HFACTOR * k + x)).toString() + "px";
-      this.ratingInterfaceAnchor.style.top = (this.height / 2 + nodePosition[1] * k + y).toString() + "px";
+      this.ratingInterfaceAnchor.style.left = (this.width / 2 + (nodePosition[0] * xStretch * k + x)).toString() + "px";
+      this.ratingInterfaceAnchor.style.top = (this.height / 2 + nodePosition[1] * k + y + this.ratingInterfaceOffset).toString() + "px";
     }
 
     this.labelContainer.style.left = (this.width / 2 + x).toString() + "px";
@@ -868,7 +929,7 @@ export class MindMapView extends ItemView {
       this.updateVisibility();
     }
 
-    const xCoords = nodes.map((node) => node.x! * HFACTOR);
+    const xCoords = nodes.map((node) => node.x! * xStretch);
     const yCoords = nodes.map((node) => node.y!);
     let minX = Math.min(...xCoords);
     let maxX = Math.max(...xCoords);
@@ -876,9 +937,9 @@ export class MindMapView extends ItemView {
     let maxY = Math.max(...yCoords);
     const frameCentreX = (minX + maxX) * 0.5;
     const frameCentreY = (minY + maxY) * 0.5;
-    const frameWidth = Math.max(maxX - minX, 1);
-    const frameHeight = Math.max(maxY - minY, 1);
-    const scaleF = 0.833 * Math.min(this.width / frameWidth, this.height / frameHeight);
+    const frameWidth = Math.max(maxX - minX, 1) + 120 * xStretch;
+    const frameHeight = Math.max(maxY - minY, 1) + 120;
+    const scaleF = Math.min(this.width / frameWidth, this.height / frameHeight);
     const transform = d3.zoomIdentity
         .scale(Math.min(Math.max(scaleF, SCALE_EXTENT[0]), SCALE_EXTENT[1]))
         .translate(-frameCentreX, -frameCentreY);
@@ -889,11 +950,24 @@ export class MindMapView extends ItemView {
     );
   }
 
+  toggleLabels() {
+    this.showLabels = !this.showLabels;
+    this.toggleLabelButton.textContent = `${this.showLabels ? "Hide" : "Show"} labels`;
+    if (this.showLabels) {
+      this.labels.forEach(label => label.show());
+    } else {
+      this.labels.forEach(label => label.hide());
+    }
+  }
+
   updateVisibility(nodeIndices?: number[]) {
     if (!nodeIndices) {
       this.node.attr('opacity', "100%");
       this.link.attr('opacity', "100%");
-      this.labels.forEach(label => label.style.opacity = "100%");
+      this.labels.forEach(label => {
+        label.style.opacity = "100%";
+        label.show()
+      });
       return;
     }
 
@@ -904,7 +978,10 @@ export class MindMapView extends ItemView {
         const containsSource = nodeIndices.contains(d.sourceIndex);
         return containsTarget && containsSource ? "100%" : "25%";
       });
-      this.labels.forEach((label, i) => label.style.opacity = nodeIndices.contains(i) ? "100%" : "0%");
+      this.labels.forEach((label, i) => {
+        label.style.opacity = nodeIndices.contains(i) ? "100%" : "25%";
+        if (this.showLabels) label.show();
+      });
     } else if (this.viewMode == ViewMode.Study) {
       this.node.attr('opacity', d => {
         if (nodeIndices.contains(d.index)) {
@@ -933,34 +1010,38 @@ export class MindMapView extends ItemView {
       this.labels.forEach((label, i) => {
         let opacity = "";
         if (nodeIndices.contains(i)) {
-          if (this.interactableNodes.contains(i) || nodeIndices[0] == i) {
+          if (this.showLabels) label.show();
+          if (this.interactableNodes.contains(i) || nodeIndices[0] == i) { // node can be clicked or is the parent
             opacity = "100%";
-          } else {
-            opacity = "50%";
+          } else { // node can not be clicked
+            opacity = "75%";
           }
         } else {
-          opacity = "0%";
+          label.hide();
         }
         label.style.opacity = opacity;
-      })
+      });
     }
   }
 
   changeViewMode(mode?: ViewMode) {
     let buttonText = "";
+    this.stopSimulation();
     if (mode) {
       this.viewMode = mode;
     } else {
       switch(this.viewMode) { // cycle through options
         case ViewMode.Arrange: 
           this.viewMode = ViewMode.Navigate; 
+          this.focusNodes();
           break;
         case ViewMode.Navigate: 
           this.viewMode = ViewMode.Study; 
           this.goToNextNode();
           break;
-        case ViewMode.Study: 
+        case ViewMode.Study:
           this.viewMode = ViewMode.Arrange; 
+          this.focusNodes();
           break;
       }
     }
@@ -1010,6 +1091,11 @@ export class MindMapView extends ItemView {
     }
   }
 
+  stopSimulation() {
+    this.simulationButton.textContent = "Run simulation";
+    this.simulation.alphaTarget(0).alphaDecay(INITIAL_ALPHADECAY);
+  }
+
   changeSearchType() {
     switch(this.searchType) {
       case SearchType.BreadthFirst:
@@ -1033,7 +1119,7 @@ export class MindMapView extends ItemView {
     const interactable = this.node.filter((d, i) => this.interactableNodes.contains(i));
     // console.log('setInteractable(): interactable nodes:', this.interactableNodes.map(index => this.nodes[index]));
     // interactable.attr('stroke-width', 2 / this.transform.k);
-    interactable.attr('stroke-width', 1);
+    // interactable.attr('stroke-width', 1);
   }
 
   updateDue() {
@@ -1079,15 +1165,19 @@ export class MindMapView extends ItemView {
     this.currentParent = index;
     this.setInteractable(index);
     this.focusNodes(this.nodes[index], 2, 1);
-    console.log("goToNextNode() node:", this.nodes[index].content);
+    console.log("goToNextNode() node:", this.nodes[index].id);
+  }
+
+  viewImage(url: string) {
+
   }
 }
 
 function nodeRadius (node: Node) { 
   if (node.centre) {
-    return 6;
+    return 18;
   } else {
-    return 3 + 3 / (node.level + 1);
+    return 12 + 6 / (node.level + 1);
   }
 };
 
@@ -1124,8 +1214,12 @@ function linkStrokeDasharray(mode: ViewMode, link: Link): string {
   return "";
 }
 
+function fontSize(min: number, max: number, level: number): string {
+  const d = max - min;
+  return (Math.round((d / (level + 1) + min) * 2) * 0.5).toString() + "px";
+}
 
-
-function textWrap(docClass: string, text: string, aspect: number) { // aspect = width / height
-  
+function collideRadius(text: string): number {
+  // console.log("collideRadius()", text, Math.sqrt(text.length)); 
+  return Math.sqrt(text.length);
 }

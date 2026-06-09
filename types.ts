@@ -21,7 +21,7 @@ export interface NoteProperties {
 export interface Note {
   listIndex: number; // number in list. 0 if unordered list
   content: string; // full content in markdown
-  type: 'key word' | 'relation' | 'image';
+  type: 'key word' | 'relation' | 'info';
   id: string | null; // "" if empty, null to force unlink
   props: NoteProperties; 
 }

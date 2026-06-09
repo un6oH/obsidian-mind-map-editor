@@ -7,6 +7,13 @@ If your plugin does not need CSS, delete this file.
 
 */
 
+:root {
+  --card-state-learning: #F87171;
+  --card-state-new: #93C5FD;
+  --card-state-review: #22C55E;
+  --card-state-relearning: #F87171;
+}
+
 .widget-map {
   /* background-color: lightskyblue; */
 }
@@ -88,16 +95,12 @@ If your plugin does not need CSS, delete this file.
   width: calc(100% - 2 * var(--size-4-3));
   height: calc(100% - var(--size-4-3) - max(var(--safe-area-inset-bottom), var(--size-4-8)) - var(--header-height));
   position: absolute;
+  --min-font-size: 12px;
 }
 
 .mind-map-view-settings-container {
   position: absolute;
   background-color: lightblue;
-}
-
-.mindmap-node-label {
-  fill: white;
-  text-shadow: 0px 0px 4px black;
 }
 
 .mind-map-rating-interface-anchor {
@@ -119,12 +122,11 @@ If your plugin does not need CSS, delete this file.
 .mind-map-label-container {
   position: relative;
   color: white;
-  text-shadow: 0px 0px 4px black;
+  text-shadow: 1px 1px 2px black;
 }
 
 .mind-map-label-anchor {
   position: relative;
-  width: 16em;
 }
 
 .mind-map-label {
@@ -134,4 +136,34 @@ If your plugin does not need CSS, delete this file.
   text-align: center;
   text-wrap: wrap;
   line-height: 90%;
+}
+
+.mind-map-label .label-content {
+
+}
+
+.mind-map-label .label-content .fragment-revealed {
+  /* color: lightblue; */
+  font-style: italic;
+  /* text-decoration: underline; */
+}
+
+.mind-map-label .label-content .fragment-normal {
+  color: white;
+}
+
+.mind-map-label .label-content .fragment-image {
+  color: var(--link-color);
+}
+
+.mind-map-label .label-hidden {
+  text-shadow: 0px 0px 10px white;
+}
+
+.mind-map-label .label-hidden .fragment-hidden {
+  white-space: pre;
+  color: lightblue;
+  font-weight: bold;
+  /* outline: 2px solid white;
+  outline-offset: -2px; */
 }

@@ -1,10 +1,10 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } from "ts-fsrs";
 import { MapProperties, NoteProperties, Note, MindMap, MapSettings } from "types";
-import { interpolateRainbow } from "d3";
+import { interpolateRainbow, style } from "d3";
 
 export const noteTagOpen = "%%note";
 export const noteTagClose = "%%";
-export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
+export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
 export const noteRegex = RegExp(notePattern, 'd');
 // [1]: list delimiter
 // [2]: content
@@ -21,8 +21,11 @@ export const mapTagClose = "%%";
 export const mapTagPattern = `${mapTagOpen}(.*?)${mapTagClose}`;
 export const mapTagRegex = RegExp(mapTagPattern, 'd');
 
-export const imagePattern = "\!\[\[(.*?)\.png(\|\d+)*\]\]";
+export const imagePattern = `\\!\\[\\[(.*?\\.png)(\\|\\d+)?\\]\\]`;
 export const imageRegex = RegExp(imagePattern, 'd');
+
+export const infoPattern = "^\\(.*\\)$";
+export const infoRegex = RegExp(infoPattern);
 
 export const errorTagOpen = "%%error";
 export const errorTagClose = "%%";
@@ -131,8 +134,6 @@ export function parseNote(match: RegExpExecArray): Note {
 	note.content = content;
 	if (note.content.endsWith(':')) {
 		note.type = 'relation';
-	} else if (imageRegex.exec(note.content)) {
-		note.type = 'image';
 	} else {
 		note.type = 'key word';
 	}
@@ -351,54 +352,181 @@ export function removeTags(text: string): string {
 }
 
 interface TextFragment {
-	index: number, 
-	match: string,
+	text: string,
+	hidden: boolean;
+	image: boolean;
+	fragments: TextFragment[], 
 }
-enum FragmentStyles {
-	Normal, 
-	Cloze, 
-	Image, 
-}
-export function formatContent(text: string): { content: Element, hidden: Element } {
-  let match: RegExpExecArray | null;
-	
+export function formatContent(document: Document, text: string, viewImageCallback: (url: string) => void): { content: Element, hidden: Element } {
+	const fragments: TextFragment[] = [];
 	const imageRegex = new RegExp(imagePattern, 'g');
-	const images: TextFragment[] = [];
-	while ((match = imageRegex.exec(text)) !== null) {
-		images.push({
-			index: match.index, 
-			match: match[0],
+	const infoRegex = new RegExp(infoPattern);
+
+	let infoMatch = infoRegex.exec(text);
+	if (infoMatch) { // no clozes
+		fragments.push({
+			text, 
+			hidden: false, 
+			image: false, 
+			fragments: []
+		});
+		// console.log("formatContent()", text, "is an info node", infoMatch);
+	} else {
+		// check if text has a ':'
+		let colonMatch = RegExp(`.+:\\s*`).exec(text);
+		if (colonMatch) {
+			// before delimiter
+			let before = colonMatch[0];
+			// console.log(text, before);
+			fragments.push({
+				text: before, 
+				hidden: false,
+				image: false,  
+				fragments: []
+			});
+			let after = text.slice(before.length);
+			if (after) fragments.push({ // property: value pair. defaults to cloze
+				text: after, 
+				hidden: true,
+				image: false,  
+				fragments: [] 
+			});
+		} else { // not a ':' delimited phrase. defaults to key word
+			fragments.push({
+				text: text, 
+				hidden: true,
+				image: false,
+				fragments: []
+			});
+		}
+		
+		// find clozes
+		fragments.forEach((fragment, i) => {
+			let text = fragment.text;
+			if (!text) return;
+
+			const regex = /{(.*?)}/g;
+			let clozeMatch;
+			let prevLastIndex = 0;
+			while ((clozeMatch = regex.exec(text)) !== null) {
+				fragment.hidden = false; // do not hide if there are clozes
+				if (clozeMatch.index > prevLastIndex) { // add text before the match to the fragment list
+					fragment.fragments.push({
+						text: text.slice(prevLastIndex, clozeMatch.index), 
+						hidden: false,
+						image: false,
+						fragments: []
+					});
+				}
+				fragment.fragments.push({
+					text: clozeMatch[1], 
+					hidden: true,
+					image: false,
+					fragments: [] 
+				});
+				prevLastIndex = regex.lastIndex;
+			}
+			if (prevLastIndex < text.length) { // add last fragment
+				fragment.fragments.push({
+					text: text.slice(prevLastIndex), 
+					hidden: fragment.hidden,
+					image: false,
+					fragments: []
+				});
+				// console.log("added tail fragment:", text.slice(prevLastIndex), prevLastIndex, text.length);
+			}
 		});
 	}
 
-	const clozeRegex = /{(.*)}/g;
-	const clozes: TextFragment[] = [];
-	while ((match = clozeRegex.exec(text)) !== null) {
-		clozes.push({ index: match.index, match: match[0] });
-	}
-	if (clozes.length == 0) {
-		match = /: (.*)/.exec(text);
-		if (match) {
-			clozes.push({ index: match.index, match: match[1] });
+	// check for images in each subfragment
+	fragments.forEach((fragment, i) => {
+		fragment.fragments.forEach((subFragment, j) => {
+			let imageMatch;
+			let prevLastIndex = 0;
+			let text = subFragment.text;
+			const imageRegex = RegExp(imagePattern, 'g');
+			while ((imageMatch = imageRegex.exec(text)) !== null) {
+				if (imageMatch.index > prevLastIndex) { // add text before the match to the fragment list
+					subFragment.fragments.push({
+						text: text.slice(prevLastIndex, imageMatch.index), 
+						hidden: subFragment.hidden,
+						image: false,
+						fragments: []
+					});
+				}
+				subFragment.fragments.push({
+					text: imageMatch[1], // set the text to the image url 
+					hidden: subFragment.hidden,
+					image: true,
+					fragments: []
+				});
+				prevLastIndex = imageRegex.lastIndex;
+			}
+			if (prevLastIndex < text.length) { // add last fragment
+				subFragment.fragments.push({
+					text: text.slice(prevLastIndex), 
+					hidden: subFragment.hidden,
+					image: false,
+					fragments: []
+				});
+				// console.log("added tail fragment:", text.slice(prevLastIndex), prevLastIndex, text.length);
+			}
+		});
+	});
+	
+  const revealedLabel = document.createElement('span');
+  revealedLabel.addClass("label-content");
+  const hiddenLabel = document.createElement('span');
+  hiddenLabel.addClass("label-hidden");
+	const hiddenText = "[ . . . ]"
+	const populate = (fragment: TextFragment, parentHidden: boolean) => {
+		// console.log(fragment);
+		if (fragment.fragments.length) {
+			// condense all fragments within a hidden fragment to one box
+			if (fragment.hidden && !parentHidden) {
+				let hiddenFragment = document.createElement('span');
+				hiddenFragment.textContent = hiddenText;
+				hiddenFragment.addClass('fragment-hidden');
+				hiddenLabel.appendChild(hiddenFragment);
+				// console.log("formatContent() added hidden fragment:", fragment.text, "to: ", text);
+			}
+			// recursively populate content
+			fragment.fragments.forEach(f => populate(f, fragment.hidden)); 
+		} else {
+			// console.log('populate() populating element');
+			let contentFragment = document.createElement('span');
+			if (fragment.image) {
+				contentFragment.textContent = "[image]";
+				contentFragment.addClass("fragment-image");
+				contentFragment.onclick = () => viewImageCallback(fragment.text);
+			} else {
+				contentFragment.textContent = fragment.text;
+			}
+			contentFragment.addClass(fragment.hidden ? 'fragment-revealed' : 'fragment-normal');
+			revealedLabel.appendChild(contentFragment);
+
+			let hiddenFragment = document.createElement('span');
+			if (!parentHidden) { // only add a blank if the parent is not hidden
+				if (fragment.hidden) {
+					hiddenFragment.textContent = hiddenText;
+					hiddenFragment.addClass('fragment-hidden');
+					hiddenLabel.appendChild(hiddenFragment);
+				} else {
+					hiddenFragment.textContent = fragment.text;
+					hiddenFragment.addClass('fragment-normal');
+					hiddenLabel.appendChild(hiddenFragment);
+				}
+			} else {
+				// console.log("populate()", text, "parent hidden; no element added.");
+			}
+			// console.log("populate()", text, content, hidden);
+			// don't add anything if the parent is already hidden
 		}
 	}
+	fragments.forEach(fragment => populate(fragment, false));
 
-	const fragments: TextFragment[] = [];
-	fragments.push(...images);
-	fragments.push(...clozes);
-	fragments.sort((a, b) => a.index - b.index);
-	let i = 0;
-	while (i < text.length) {
-		let nextFragmentStart = 0;
-
-	}
-	
-  const content = document.createElement('span');
-  content.addClass("mind-map-label-content");
-  const hidden = document.createElement('span');
-  hidden.addClass("mind-map-label-hidden");
-
-  return { content, hidden };
+	// console.log(text, fragments);
+  return { content: revealedLabel, hidden: hiddenLabel };
 }
 
 export const COLOUR_DIVISIONS = 8;

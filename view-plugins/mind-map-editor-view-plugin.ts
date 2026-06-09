@@ -83,16 +83,16 @@ class MapStudyParametersWidget extends WidgetType {
 // }
 
 class NoteDataWidget extends WidgetType {
-  app: App;
-  view: EditorView;
+  app: App = {} as App;
+  view: EditorView = {} as EditorView;
   noteMatch: RegExpExecArray;
   indices: number[][];
   level: number;
   content: string;
   id: string | null;
-  isKeyWord: boolean;
-  study: boolean;
-  state: State;
+  isKeyWord: boolean = false;
+  study: boolean = false;
+  state: State = {} as State;
 
   constructor(app: App, noteMatch: RegExpExecArray) {
     super();
