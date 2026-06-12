@@ -331,7 +331,7 @@ export class MindMapView extends ItemView {
   }
 
   async loadMindMap(mindMap: MindMap, layout: MindMapLayout, saveProgressCallback: () => void, saveLayoutCallback: (layout: MindMapLayout) => void) {
-    // console.log("initialiseMindMap() mindMap.notes:", mindMap.notes);
+    console.log("loadMindMap() mindMap.notes:", mindMap.notes);
     this.mindMap = mindMap;
     this.layout = layout;
     this.saveProgressCallback = saveProgressCallback;
@@ -378,7 +378,7 @@ export class MindMapView extends ItemView {
     const chains: Chain[] = [];
     let nodeIndex = 0;
     for (let note of this.mindMap.notes) {
-      // add id groups
+      // if the note has a specified id
       if (note.id && this.mindMap.map.settings.crosslink) {
         const groupIndex = groups.findIndex((group) => group.id === note.id);
         if (groupIndex == -1) { // no matching id
@@ -411,10 +411,10 @@ export class MindMapView extends ItemView {
 
       let id = toPathString(note.props.path);
       let parent = toPathString(note.props.path.slice(0, -1));
-      if (note.props.path.length == 1 && note.type === 'key word') { // top level note 
-        if (this.mindMap.map.settings.separateHeadings) { // must have centre node
-          new Notice("Error: Key words must be linked to a source node.");
-          console.log("initialiseMindMap() Error: top level key word does not have centre node");
+      if (note.props.path.length == 1) { // primary node that can be studied
+        if (this.mindMap.map.settings.separateHeadings && note.props.study) { // must have centre node
+          new Notice("Error: Key words must have a parent node.");
+          console.log("loadMindMap() Error: key word does not have a parent node");
           return;
         } else {
           parent = centreNode.id;
@@ -422,6 +422,7 @@ export class MindMapView extends ItemView {
       }
 
       // add to chain array
+      // console.log("loadMindMap() parent:", parent, id);
       const chainIndex = chains.findIndex((chain) => chain.origin === parent);
       if (chainIndex != -1) {
         chains[chainIndex].nodes[listIndex - 1] = id; // assign chain
@@ -435,10 +436,11 @@ export class MindMapView extends ItemView {
     }
 
     // verify chains
+    console.log("loadMindMap() chains:", chains)
     for (let chain of chains) {
       for (let i = 0; i < chain.nodes.length; i++) {
-        if (chain.nodes[i] == undefined) {
-          console.log("initialiseMindMap() Error: chain entry missing.");
+        if (chain.nodes[i] === undefined) {
+          console.log("loadMindMap() Error: chain entry missing.", chain);
           return;
         }
       }
@@ -449,6 +451,7 @@ export class MindMapView extends ItemView {
     let linkIndex = 0;
     const now = new Date();
     for (let note of this.mindMap.notes) {
+      // console.log("loadMindMap() note", note);
       let nodeId: string;
       const path = note.props.path;
       
@@ -462,6 +465,7 @@ export class MindMapView extends ItemView {
         newNode = refIndex == nodeIndex; // only make one new node per group
       } else {
         nodeId = toPathString(path);
+        // check for duplicates
         if (!this.nodes.every((node) => node.id !== nodeId)) newNode = false;
       }
       nodeIndex++;
@@ -476,6 +480,7 @@ export class MindMapView extends ItemView {
         source = chains[chainIndex].nodes[listIndex - 2];
       }
 
+      // console.log("loadMindMap()", newNode);
       if (newNode) { // only add unique nodes
         const {content, hidden} = formatContent(document, note.content, this.viewImage);
         // console.log(note.content, content, hidden);
@@ -500,6 +505,7 @@ export class MindMapView extends ItemView {
             node.y = layout.yCoords[index];
           }
         }
+        // console.log("loadMindMap() new node", node);
         this.nodes.push(node);
         originIds.push(origin);
       }
@@ -525,14 +531,12 @@ export class MindMapView extends ItemView {
       if (id) {
         const nodeIndex = this.nodes.findIndex((node) => node.id === id);
         if (nodeIndex == -1) {
-          console.log("initialiseMindMap() node origin not found:", id, this.nodes.findIndex((node) => node.id === id));
+          console.log("loadMindMap() node origin not found:", id, this.nodes.findIndex((node) => node.id === id));
           return;
         }
         this.nodes[i].originIndex = nodeIndex;
       }
     });
-
-    
 
     for (let i = 0; i < this.links.length; i++) {
       const sourceId = this.links[i].source as string;
@@ -540,7 +544,7 @@ export class MindMapView extends ItemView {
       const targetId = this.links[i].target as string;
       const targetNode = this.nodes.find(node => node.id === targetId);
       if (!sourceNode || !targetNode) {
-        console.log("initialiseMindMap() node(s) not found:", sourceId, targetId);
+        console.log("loadMindMap() node(s) not found:", sourceId, targetId);
         continue;
       }
 

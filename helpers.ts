@@ -1,5 +1,5 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } from "ts-fsrs";
-import { MapProperties, NoteProperties, Note, MindMap, MapSettings } from "types";
+import { MapProperties, NoteProperties, Note, MindMap, MapSettings, ContentInfo } from "types";
 import { interpolateRainbow, style } from "d3";
 
 export const noteTagOpen = "%%note";
@@ -13,7 +13,7 @@ export const noteRegex = RegExp(notePattern, 'd');
 export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
 export const noteTagRegex = RegExp(noteTagPattern, 'd');
 
-export const idTagPattern = "#\\w+";
+export const idTagPattern = "#(\\w*)$";
 export const idTagRegex = RegExp(idTagPattern, 'd');
 
 export const mapTagOpen = "%%map";
@@ -98,7 +98,7 @@ export function createBlankNote(): Note {
 		listIndex: 0, 
     content: "", 
 		type: 'key word', 
-		id: null, 
+		id: undefined, 
     props: createNoteProperties(false), 
   }
 }
@@ -121,6 +121,38 @@ export function parseMapTag(string: string): MapSettings {
 	};
 }
 
+export function parseContent(content: string): ContentInfo {
+	content = content.trim();
+	const result: ContentInfo = {
+		content: content, 
+		type: 'key word', 
+		id: undefined
+	}
+
+	let idMatch = idTagRegex.exec(content);
+	if (idMatch) {
+		result.id = idMatch[1];
+		const indices = (idMatch as any).indices;
+		result.content = content.slice(0, indices[0][0]).trim();
+	}
+
+	switch (content.slice(-1)) {
+		case ':':
+			result.type = 'relation';
+			result.content = content.slice(0, -1).trim();
+			break;
+		case ')':
+			if (content.startsWith('(')) {
+				result.type = 'info';
+				result.content = content.slice(1, -1).trim();
+			}
+			break;
+	}
+	
+	// console.log("parseContent()", result);
+	return result;
+}
+
 // parse note entry
 // any line starting with "- "
 // return note with assigned properties
@@ -130,39 +162,32 @@ export function parseNote(match: RegExpExecArray): Note {
 
 	note.listIndex = parseListIndex(match[2]);
 
-	const { content, id } = getId(match[3]);
+	const { content, id, type } = parseContent(match[3]);
 	note.content = content;
-	if (note.content.endsWith(':')) {
-		note.type = 'relation';
-	} else {
-		note.type = 'key word';
-	}
 	note.id = id;
+	note.type = type;
   
 	// parse the props string
 	note.props = parseNoteProps(match[4]);
 	return note;
 }
 
-export function getId(content: string): { content: string, id: string | null } {
-	if (content.trim().endsWith('*')) {
-		return {
-			content: content.trim().slice(0, -1), 
-			id: null
-		}
-	}
-	
+// return "" to force ignoring groups
+// return null to allow regrouping
+export function getNoteId(content: string): { content: string, id: string | undefined } {
+	content.trim();
+
 	const idTagMatch = idTagRegex.exec(content);
-	if (idTagMatch) {
-		content = content.slice(0, (idTagMatch as any).indices[0][0]);
+	if (idTagMatch) { // id specified
+		content = content.slice(0, (idTagMatch as any).indices[0][0]).trim();
 		return {
-			content: content.slice(0, (idTagMatch as any).indices[0][0]).trim(), 
-			id: idTagMatch[0].slice(1)
+			content, 
+			id: idTagMatch[1]
 		}
-	} else {
+	} else { // id not specified
 		return {
-			content: content.trim(), 
-			id: ""
+			content, 
+			id: undefined
 		}
 	}
 }
@@ -235,34 +260,48 @@ export function toNoteID(str: string, title: boolean = false): string {
 
 	const alphaNumeric = str.replace(/[^a-zA-Z0-9]/g, ''); 
 	const lowercase = alphaNumeric.toLowerCase();
-	// if (title) {
-	// 	// console.log(lowercase);
-	// 	return lowercase;
-	// }
+	return lowercase
 
-	if (lowercase.length > NOTE_ID_MAX_LENGTH) {
-		let result = "";
-		let interval = (lowercase.length + 0.5) / NOTE_ID_MAX_LENGTH;
-		for (let i = 0; i < lowercase.length; i += interval) {
-			result += lowercase.charAt(i);
-		}
-		// console.log(result);
-		return result;
-	} else {
-		// console.log(lowercase);
-		return lowercase
-	}
+	// if (lowercase.length > NOTE_ID_MAX_LENGTH) {
+	// 	let result = "";
+	// 	let interval = (lowercase.length + 0.5) / NOTE_ID_MAX_LENGTH;
+	// 	for (let i = 0; i < lowercase.length; i += interval) {
+	// 		result += lowercase.charAt(i);
+	// 	}
+	// 	// console.log(result);
+	// 	return result;
+	// } else {
+	// 	// console.log(lowercase);
+	// 	return lowercase
+	// }
 }
 
+// interface IdMap {
+// 	content: string[];
+// 	ids: (string | null)[];
+// }
+
+// export function assignID(content: string, id: string | null, map: IdMap): {id: string, idMap: IdMap} {
+// 	let contentMatch = map.content.indexOf(content);
+// 	let newMap = map;
+// 	let newId = id;
+// 	if (contentMatch != -1) {
+// 		let idMatch = map.ids.indexOf(id);
+// 		if (idMatch != -1) {
+
+// 		}
+// 	} else {
+
+// 	}
+// }
+
 export function createNoteString(note: Note): string {
-	let str = note.listIndex == 0 ? "- " : `${note.listIndex}. `;
-	str += note.content;
-	if (note.id == null) {
-		str += "* ";
-	} else if (note.id === "") {
-		str += " ";
-	} else {
+	// let str = note.listIndex == 0 ? "- " : `${note.listIndex}. `;
+	let str = note.content;
+	if (note.id !== undefined) {
 		str += " #" + note.id + " ";
+	} else {
+		str += " ";
 	}
 	str += createNoteTag(note.props, true);
 	return str;
@@ -340,15 +379,16 @@ export function parseListIndex(str: string): number {
 }
 
 export function removeTags(text: string): string {
-	let noteTagMatch = noteTagRegex.exec(text) as any;
-	if (noteTagMatch) {
-		text = text.substring(0, noteTagMatch.indices[0][0]);
-	}
-	let errorTagMatch = errorTagRegex.exec(text) as any;
-	if (errorTagMatch) {
-		text = text.substring(0, errorTagMatch.indices[0][0]);
-	}
-	return text.trim();
+	// let noteTagMatch = noteTagRegex.exec(text) as any;
+	// if (noteTagMatch) {
+	// 	text = text.substring(0, noteTagMatch.indices[0][0]);
+	// }
+	// let errorTagMatch = errorTagRegex.exec(text) as any;
+	// if (errorTagMatch) {
+	// 	text = text.substring(0, errorTagMatch.indices[0][0]);
+	// }
+	// return text.trim();
+	return text.split('%%', 1)[0].trim();
 }
 
 interface TextFragment {

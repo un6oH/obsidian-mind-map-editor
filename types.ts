@@ -12,6 +12,12 @@ export interface MapSettings {
   studySettings: FSRSParameters;
 }
 
+export interface ContentInfo {
+	content: string;
+	type: 'key word' | 'relation' | 'info';
+	id: string | undefined;
+}
+
 export interface NoteProperties {
   path: string[]; // all parents
   study: boolean; // whether the node can be studied
@@ -22,7 +28,7 @@ export interface Note {
   listIndex: number; // number in list. 0 if unordered list
   content: string; // full content in markdown
   type: 'key word' | 'relation' | 'info';
-  id: string | null; // "" if empty, null to force unlink
+  id: string | undefined; // "" if empty, null to force unlink
   props: NoteProperties; 
 }
 
@@ -30,7 +36,7 @@ export interface Note {
 // ref stores the index of the lowest level (reference) instance
 export interface NoteGroup {
 	content: string | undefined; // undefined if there is a conflict
-	id: string; // #<id> or ""
+	id: string | undefined; // #<id> #"" or blank
 	indices: number[]; // index in note library
 	levels: number[]; 
 	// parentIndex: number | null; // for duplicate relations under the same parent

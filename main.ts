@@ -3,7 +3,7 @@ import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap } from 'types';
-import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getId, noteRegex, parseNote, createNoteString } from 'helpers';
+import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseContent } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
@@ -12,9 +12,9 @@ const DEFAULT_SETTINGS = {
 }
 
 export default class MindMapEditorPlugin extends Plugin {
-	settings: Settings;
-	mindMapView: MindMapView;
-	currentMindMapTitle: string;
+	settings: Settings = {} as Settings;
+	mindMapView: MindMapView = {} as MindMapView;
+	currentMindMapTitle: string = "";
 
 	async onload() {
 		console.log("plugin loaded.");
@@ -59,7 +59,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		studyMindMapStatusBarItem.textContent = `Study mind map`;
 		studyMindMapStatusBarItem.onclick = () => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-			const editor = activeView!.editor;
+			const editor = activeView!.editor;35
 			const text = activeView!.editor.getRange(
 				{ line: 0, ch: 0 }, 
 				{ line: editor.lineCount(), ch: 0 }
@@ -198,10 +198,10 @@ export async function studyMindMap(plugin: MindMapEditorPlugin, editor: Editor, 
 	await view.loadGraph(mindMap, layout, () => updateNote(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
 }
 
-interface noteLibrary {
+interface NoteList {
 	listIndices: number[]; 
 	contents: string[]; // content of notes
-	ids: (string | null)[]; // id of notes
+	ids: (string | undefined)[]; // id of notes
 	lines: number[]; // line number of each note
 	levels: number[]; // indent level of each note
   groups: NoteGroup[];
@@ -209,12 +209,12 @@ interface noteLibrary {
 	warnings: Warning[]; // list of types
 }
 
-function processDocument(doc: Editor): noteLibrary {
+function processDocument(doc: Editor): NoteList {
 	// note library properties
 	// ensure every valid note is pushed
 	const listIndices: number[] = [];
 	const contents: string[] = [];
-	const ids: (string | null)[] = [];
+	const ids: (string | undefined)[] = [];
 	const lines: number[] = [];
 	const levels: number[] = [];
 	// only some notes
@@ -222,44 +222,21 @@ function processDocument(doc: Editor): noteLibrary {
 	const warningLines: number[] = []; // lines with associated warning
 	const warnings: Warning[] = []; // type of warning
 
-	const listItemRegex = RegExp("^(?<tabs>\t*)(?<list>[0-9]+\. |- )(?<content>.+)"); // finds lines with a list delimiter and content
-	// 1: tabs
-	// 2: list delimiter; xx. OR -
-	// 3: content
+	const listItemRegex = RegExp("^(?<tabs>\\t*)(?<list>[0-9]+\\. |- )(?<content>.+)"); // finds lines with a list delimiter and content
 
 	// line-by-line
 	for (let l = 0; l < doc.lineCount(); l++) {
 		const line = doc.getLine(l);
 		const match = listItemRegex.exec(line);
 
-		if (!match) {
-			if (/# /.exec(line) || mapTagRegex.exec(line)) continue;
-
-			if (line.trim() === "") {
-				// console.log(`processDocument() empty line: ${l}`);
-				warningLines.push(l);
-				warnings.push(Warning.EmptyLine);
-				continue;
-			} else {
-				// console.log(`processDocument() invalid note found at line ${l}:`, line);
-				warningLines.push(l);
-				warnings.push(Warning.Invalid);
-				continue;
-			}
-		}
-
-		if (match[3].trim() === "") {
-			// console.log(`processDocument() empty line: ${l}`);
-			warningLines.push(l);
-			warnings.push(Warning.Invalid);
-			continue;
-		}
+		if (!match || match[3].trim() === "") continue;
 
 		// extract list index, content and id
-		let listIndex = parseListIndex(match[1]);
+		let listIndex = parseListIndex(match[2]);
 		listIndices.push(listIndex);
 		let text = removeTags(match[3]);
-		let { content, id } = getId(text);
+		let { content, id } = getNoteId(text);
+		
 		if (!content && !id) {
 			warningLines.push(l);
 			warnings.push(Warning.Invalid);
@@ -273,39 +250,45 @@ function processDocument(doc: Editor): noteLibrary {
 		const level = match[1].length;
 		levels.push(level);
 
-		if (id == null) continue; // do not check note groups
-		
+		if (id === "") continue; // note is marked with #; ignore note groups
+
 		content = content.toLowerCase();
-		if (id) { // all notes with an id tag get linked
+		if (id !== undefined) { // all notes with an id tag get linked
 			const groupIndex = groups.findIndex((group) => group.id === id);
-			if (groupIndex == -1) { // no matching id
+
+			// no matching id
+			if (groupIndex == -1) { 
+				// create a new group
 				groups.push({
 					content, 
-					id, 
+					id: id, 
 					indices: [index], 
 					levels: [level], 
 					ref: index,
 				});
 			} else {
+				// check if there is a content conflict
 				if (content) {
 					const groupContent = groups[groupIndex].content;
 					if (groupContent !== undefined) { 
 						if (groupContent === "") { // first instance of tag was empty
-							groups[groupIndex].content = content;
+							groups[groupIndex].content = content; // set the content
 						} else if (groupContent !== content) {
-							groups[groupIndex].content = undefined;
+							groups[groupIndex].content = undefined; // set undefined to flag conflict
 						}
 					} // leave undefined as there is a conflict
 				}
 				groups[groupIndex].indices.push(index);
 				groups[groupIndex].levels.push(level);
 			}
-		} else if (!content.endsWith(':')) {
+		} else {
+			// find group with the same content and is accepting more members
 			const groupIndex = groups.findIndex((group) => group.id === "" && group.content! === content);
-			if (groupIndex == -1) { 
+			if (groupIndex == -1) { // no valid groups found
+				// create a group
 				groups.push({
 					content, 
-					id, 
+					id: id, 
 					indices: [index], 
 					levels: [level], 
 					ref: index,
@@ -320,11 +303,15 @@ function processDocument(doc: Editor): noteLibrary {
 	// reprocess groups
 	for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
 		const group = groups[groupIndex];
+
+
 		if (group.indices.length == 1) {
-			if (group.content === "") {
+			// check if the group does not have a label
+			if (group.content === "") { 
 				warningLines.push(lines[group.indices[0]]);
 				warnings.push(Warning.ContentNotDefined);
 			}
+			// don't need reprocessing for single-member groups
 			continue;
 		}
 
@@ -338,7 +325,9 @@ function processDocument(doc: Editor): noteLibrary {
 				groups[groupIndex].ref = index;
 			}
 		}
-		if (parents.length > 1) {
+		// multiple nodes with children
+		// need to resolve due to ambiguity for other nodes
+		if (parents.length > 1) { 
 			group.indices.forEach((index) => {
 				warningLines.push(lines[index]);
 				warnings.push(Warning.LinkConflict);
@@ -347,8 +336,8 @@ function processDocument(doc: Editor): noteLibrary {
 		}
 
 		if (group.id) { // id defined; check for content errors
-			let warning: Warning | undefined = undefined;
-			if (group.content == "") {
+			let warning: Warning | null = null;
+			if (group.content === "") {
 				warning = Warning.ContentNotDefined;
 			} else if (group.content == undefined) {
 				warning = Warning.ContentConflict;
@@ -362,7 +351,7 @@ function processDocument(doc: Editor): noteLibrary {
 		} else { // assign id to content group
 			let newId = group.content!.replace(/[^a-zA-Z0-9]/g, '');
 			// console.log("processNotes() assigning")
-			if (groups.findIndex((group) => group.id === newId)) { // id is taken
+			if (groups.findIndex((group) => group.id === newId) != -1) { // id is taken
 				let suffix = 1;
 				while(groups.findIndex((group) => group.id === newId + suffix) != -1) suffix++; // add a valid copy number
 				groups[groupIndex].id = newId + suffix;
@@ -377,21 +366,14 @@ function processDocument(doc: Editor): noteLibrary {
 	return {listIndices, contents, ids, lines, levels, groups, warningLines, warnings};
 }
 
-function proofreadNotes(editor: Editor, library: noteLibrary) {
+function proofreadNotes(editor: Editor, library: NoteList) {
 	dismissWarnings(editor);
 
 	new Notice(`${library.warningLines.length} error(s) found.`);
 
-	const mapTagMatch = editor.getDoc().getLine(1).match(mapTagRegex);
-	const crosslink = mapTagMatch ? parseMapTag(mapTagMatch[1]).crosslink : true;
-
 	for (let i = 0; i < library.warningLines.length; i++) {
 		const warning = library.warnings[i];
-		// ignore duplicate key word warnings if crosslink is disabled
-		if (!crosslink && (warning == Warning.DuplicateKeyWord || warning == Warning.LinkConflict)) continue;
-
 		const lineNumber = library.warningLines[i];
-		// console.log("proofreadNotes() line number: ", lineNumber);
 		const text = editor.getLine(lineNumber);
 		editor.replaceRange(
 			`${errorTagOpen}${warning}${errorTagClose}`, 
@@ -425,27 +407,25 @@ export function dismissWarnings(editor: Editor) {
 
 export function updateNotes(editor: Editor, linkSimilar: boolean) {
 	const doc = editor.getDoc();
-	const library = processDocument(doc);
-	if (library.warningLines.length != 0) {
+	const noteList = processDocument(doc);
+	if (noteList.warningLines.length != 0) {
 		new Notice("Unresolved warnings - fix notes");
-		proofreadNotes(editor, library);
+		proofreadNotes(editor, noteList);
 		return;
 	}
 
 	// recursively iterates through list to generate a list of paths
-	const paths = noteTree(library.contents, library.ids, library.levels, []);
+	const paths = noteTree(noteList.contents, noteList.ids, noteList.levels, []);
 	// console.log("updateNotes(): parsed note tree. paths:", paths);
 
 	// update the props tag for each note
-	for (let i = 0; i < library.lines.length; i++) {
-		const content = library.contents[i];
-		const id = library.ids[i];
-		const lineNumber = library.lines[i];
+	for (let i = 0; i < noteList.lines.length; i++) {
+		const { content, type } = parseContent(noteList.contents[i]);
+		const id = noteList.ids[i];
+		const lineNumber = noteList.lines[i];
 		const path = paths[i];
 		const line = doc.getLine(lineNumber);
-		
-		const type = noteType(content);
-		const study = type.study;
+		const study = type === "key word";
 		
 		// update the tag
 		const noteMatch = noteRegex.exec(line);
@@ -453,13 +433,9 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 			const indices = (noteMatch as any).indices;
 			const note = parseNote(noteMatch);
 			note.props.path = path;
-
-			let addId = false;
-			const idTagMatch = /#\\w+/.exec(line);
-			if (!idTagMatch && note.id !== "") addId = true;
 			
-			const start = indices[2][0]
-			const end = indices[0][1];
+			const start = indices[3][0] // start of content
+			const end = indices[0][1]; // end of line
 			editor.replaceRange(
 				createNoteString(note), 
 				{ line: lineNumber, ch: start },
@@ -470,43 +446,45 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 			props.path = path;
 
 			let addId = false;
-			const idTagMatch = /#\\w+/.exec(line);
-			if (!idTagMatch && id !== "") addId = true;
+			const idTagMatch = /#\\w*$/.exec(line.trim());
+			if (!idTagMatch && id !== undefined) {
+				addId = true;
+			}
 			
 			editor.replaceRange(
-				" " + (addId ? `#${id} ` : "") + createNoteTag(props, true), 
+				" " + (addId ? "#" + id + " " : "") + createNoteTag(props, true), 
 				{ line: lineNumber, ch: line.length }
 			);
 		}
 	}
 
-	console.log(`updateNotes(): updated ${library.contents.length} notes`);
+	console.log(`updateNotes(): updated ${noteList.contents.length} notes`);
 }
 
 // input: array of note content and associated line number and indent level
 // initially called under the mind map title
-function noteTree(notes: string[], ids: (string | null)[], levels: number[], path: string[]): string[][] {
+function noteTree(notes: string[], ids: (string | undefined)[], levels: number[], path: string[]): string[][] {
 	// get indices of lines of immediate children
-	const minLevelIndices: number[] = [];
+	const notesAtCurrentLevel: number[] = [];
 	for (let i = 0; i < notes.length; i++) { // iterate over each entry
 		if (levels[i] == path.length) {
-			minLevelIndices.push(i); // add index of immediate child
+			notesAtCurrentLevel.push(i); // add index of immediate child
 			// console.log(notes[i], i);
 		}
 	}
-	minLevelIndices.push(notes.length);
+	notesAtCurrentLevel.push(notes.length);
 
 	// iterate over immediate children
 	let paths: string[][] = []; // path accumulator
-	for (let index = 0; index < minLevelIndices.length - 1; index++) {
-		const i = minLevelIndices[index];
+	for (let index = 0; index < notesAtCurrentLevel.length - 1; index++) {
+		const i = notesAtCurrentLevel[index];
 		let self = toNoteID(notes[i] ? notes[i] : ids[i]!); // convert to id
 		let newPath = path.concat(self);
 		paths.push(newPath);
 		// console.log("added new path", newPath);
 		// indices of slice to pass into next recursion
 		let start = i + 1; 
-		let end = minLevelIndices[index + 1];
+		let end = notesAtCurrentLevel[index + 1];
 		paths.push(...noteTree(notes.slice(start, end), ids.slice(start, end), levels.slice(start, end), newPath));
 	}
 
@@ -528,10 +506,10 @@ export function isMindMap(editor: Editor): string { // returns map title if map 
 
 	const tagMatch = mapTagRegex.exec(editor.getLine(1));
 	if (tagMatch) {
-		console.log("isMindMap() mind map identified:", title);
+		// console.log("isMindMap() mind map identified:", title);
 		return title;
 	} else {
-		console.log("isMindMap() tag not found");
+		// console.log("isMindMap() tag not found");
 		return "";
 	}
 }
@@ -547,7 +525,7 @@ export function addMindMapTag(editor: Editor) {
 }
 
 async function updateNote(editor: Editor) {
-
+	
 }
 
 async function saveLayout(plugin: MindMapEditorPlugin, layout: MindMapLayout) {

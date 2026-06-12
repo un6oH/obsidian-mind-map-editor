@@ -144,6 +144,10 @@ export class StudyMindMapModal extends Modal {
 		})
 
 		new Setting(this.contentEl)
+			.setHeading()
+			.setName("Progress:");
+
+		new Setting(this.contentEl)
 			.setName("New:")
 			.addText((text) => text
 				.setValue(newCount.toString())
@@ -203,7 +207,7 @@ export class StudyMindMapModal extends Modal {
 }
 
 export class MapSettingsEditorModal extends Modal {
-	editor: Editor;
+	editor: Editor = {} as Editor;
 
 	// start and end of tag
 	constructor(app: App, view: EditorView, from: number, to: number) {
@@ -284,15 +288,19 @@ export class NotePropertyEditorModal extends Modal {
 
 		this.note = parseNote(noteMatch);
 		const initialContent = this.note.content;
-		const initialId = this.note.id == null ? "" : this.note.id;
+		const initialId = this.note.id === undefined ? "" : this.note.id;
 
 		let title = this.note.content;
-		// console.log(title);
-		if (this.note.content.endsWith(":")) {
-			title = title.slice(0, -1);
-			title = title + " (Relation)"
-		} else {
-			title = title + " (Key word)";
+		switch(this.note.type) {
+			case 'key word':
+				title += " (Key word)";
+				break;
+			case 'relation':
+				title += " (Relation)";
+				break;
+			case 'info':
+				title += " (Info)";
+				break;
 		}
 		this.setTitle(title);
 
@@ -327,13 +335,13 @@ export class NotePropertyEditorModal extends Modal {
 		let unlinkToggle: ToggleComponent;
 		let idField: TextComponent;
 		new Setting(this.contentEl)
-			.setName("Linking disabled")
-			.setDesc("Ignore tags and prevent crosslinking")
+			.setName("Link similar")
+			.setDesc("Will not link to other nodes if disabled")
 			.addToggle((toggle) => 
 				unlinkToggle = toggle
-					.setValue(this.note.id === null)
+					.setValue(this.note.id === "")
 					.onChange((unlink) => {
-						this.note.id = unlink ? null : initialId;
+						this.note.id = unlink ? "" : initialId;
 						idField.setValue(unlink ? "" : initialId);
 					})
 			);
@@ -343,11 +351,11 @@ export class NotePropertyEditorModal extends Modal {
 			.setDesc("Add a new tag or search existing tags. Letters and numbers only")
 			.addText((text) => 
 				idField = text
-					.setPlaceholder(this.note.id ? this.note.id : "")
+					.setPlaceholder(this.note.id === "" ? "links disabled" : (this.note.id ? this.note.id : ""))
 					.setValue(this.note.id ? this.note.id : "")
 					.onChange((value) => {
 						this.note.id = value.replace(/[^a-zA-Z0-9]/, '');
-						unlinkToggle.setValue(false);
+						unlinkToggle.setValue(value === "" ? true : false);
 					})
 			)
 			.addButton((button) => button
@@ -441,7 +449,7 @@ export class NotePropertyEditorModal extends Modal {
 	updateData(indices: number[][]) {
 		let content = this.note.content.trim();
 		if (this.note.id === null) {
-			content += "*";
+			content += " #";
 		} else if (this.note.id) {
 			content += " #" + this.note.id;
 		}

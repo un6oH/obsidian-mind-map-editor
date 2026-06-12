@@ -11,7 +11,7 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getId, parseNote, colour, cardStateColours } from 'helpers';
+import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseContent } from 'helpers';
 import { Warning } from 'types';
 import { State } from 'ts-fsrs';
 
@@ -89,7 +89,8 @@ class NoteDataWidget extends WidgetType {
   indices: number[][];
   level: number;
   content: string;
-  id: string | null;
+  id: string | undefined;
+  type: 'key word' | 'relation' | 'info' = 'key word';
   isKeyWord: boolean = false;
   study: boolean = false;
   state: State = {} as State;
@@ -102,9 +103,10 @@ class NoteDataWidget extends WidgetType {
 
     this.level = noteMatch[1].length;
 
-    const { content, id } = getId(noteMatch[3]);
+    const { content, id, type } = parseContent(noteMatch[3]);
     this.content = content;
     this.id = id;
+    this.type = type;
 
     const propStrings = noteMatch[4].split(';');
     this.study = propStrings[1] === 'true';
@@ -122,10 +124,8 @@ class NoteDataWidget extends WidgetType {
     const circle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
     circle.setAttributeNS(null, "cx", "12");
     circle.setAttributeNS(null, "cy", "12");
-    circle.setAttributeNS(null, "r", this.study ? "12" : "3");
+    circle.setAttributeNS(null, "r", this.study ? "12" : "6");
     circle.setAttributeNS(null, "fill", colour(this.level));
-    // circle.setAttributeNS(null, "stroke", colour(this.level));
-    // circle.setAttributeNS(null, "stroke-width", this.study ? "2" : "0");
     icon.appendChild(circle);
     if (this.study) {
       const innerCircle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
@@ -136,16 +136,14 @@ class NoteDataWidget extends WidgetType {
       icon.appendChild(innerCircle);
     }
 
-
     const block = document.createElement('span');
     block.addClass('widget-note');
     block.addClass(this.study ? 'widget-note-study' : 'widget-note-nostudy');
 
     block.appendChild(icon);
     block.appendText(this.content ? this.content : "");
-    if (this.id == null) {
-      block.appendText("*");
-    } else if (this.id) {
+    if (this.type === 'relation') block.appendText(":");
+    if (this.id !== undefined) {
       const tag = document.createElement('span');
       tag.addClass('cm-hashtag');
       tag.textContent = "#" + this.id;
