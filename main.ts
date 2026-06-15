@@ -2,8 +2,8 @@ import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidi
 import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap } from 'types';
-import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, noteType, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseContent } from 'helpers';
+import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap, ListItem } from 'types';
+import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
@@ -200,8 +200,7 @@ export async function studyMindMap(plugin: MindMapEditorPlugin, editor: Editor, 
 
 interface NoteList {
 	listIndices: number[]; 
-	contents: string[]; // content of notes
-	ids: (string | undefined)[]; // id of notes
+	listItems: ListItem[];
 	lines: number[]; // line number of each note
 	levels: number[]; // indent level of each note
   groups: NoteGroup[];
@@ -213,8 +212,7 @@ function processDocument(doc: Editor): NoteList {
 	// note library properties
 	// ensure every valid note is pushed
 	const listIndices: number[] = [];
-	const contents: string[] = [];
-	const ids: (string | undefined)[] = [];
+	const items: ListItem[] = [];
 	const lines: number[] = [];
 	const levels: number[] = [];
 	// only some notes
@@ -222,50 +220,48 @@ function processDocument(doc: Editor): NoteList {
 	const warningLines: number[] = []; // lines with associated warning
 	const warnings: Warning[] = []; // type of warning
 
-	const listItemRegex = RegExp("^(?<tabs>\\t*)(?<list>[0-9]+\\. |- )(?<content>.+)"); // finds lines with a list delimiter and content
+	const listRegex = RegExp("^(\\t*)([0-9]+\\. |- )(.+)"); // finds lines with a list delimiter and content
 
 	// line-by-line
 	for (let l = 0; l < doc.lineCount(); l++) {
 		const line = doc.getLine(l);
-		const match = listItemRegex.exec(line);
+		const match = listRegex.exec(line);
 
+		// no list item or list item is blank
 		if (!match || match[3].trim() === "") continue;
 
 		// extract list index, content and id
 		let listIndex = parseListIndex(match[2]);
 		listIndices.push(listIndex);
 		let text = removeTags(match[3]);
-		let { content, id } = getNoteId(text);
-		
-		if (!content && !id) {
-			warningLines.push(l);
-			warnings.push(Warning.Invalid);
-			continue;
-		}
-
-		const index = contents.push(content) - 1;
-		ids.push(id);
+		let item = parseListItem(text);
+		const index = items.push(item) - 1;
 		lines.push(l);
 
 		const level = match[1].length;
 		levels.push(level);
 
-		if (id === "") continue; // note is marked with #; ignore note groups
+		// note is marked with # or is a relation with no specified id; ignore note groups
+		if (item.id === "" || 
+				item.id === undefined && item.type === "relation" || 
+				item.type === "info") 
+			continue; 
 
-		content = content.toLowerCase();
-		if (id !== undefined) { // all notes with an id tag get linked
-			const groupIndex = groups.findIndex((group) => group.id === id);
+		const content = item.content.toLowerCase();
+		if (item.id !== undefined) { // all notes with an info.id tag get linked
+			const groupIndex = groups.findIndex((group) => group.id === item.id);
 
 			// no matching id
 			if (groupIndex == -1) { 
 				// create a new group
 				groups.push({
 					content, 
-					id: id, 
+					id: item.id, 
 					indices: [index], 
 					levels: [level], 
 					ref: index,
 				});
+				if (content === "assess") console.log(groups.last());
 			} else {
 				// check if there is a content conflict
 				if (content) {
@@ -280,22 +276,25 @@ function processDocument(doc: Editor): NoteList {
 				}
 				groups[groupIndex].indices.push(index);
 				groups[groupIndex].levels.push(level);
+				if (content === "assess") console.log(groups[groupIndex]);
 			}
 		} else {
 			// find group with the same content and is accepting more members
-			const groupIndex = groups.findIndex((group) => group.id === "" && group.content! === content);
+			const groupIndex = groups.findIndex((group) => group.id === undefined && group.content! === content);
 			if (groupIndex == -1) { // no valid groups found
 				// create a group
 				groups.push({
 					content, 
-					id: id, 
+					id: item.id, 
 					indices: [index], 
 					levels: [level], 
 					ref: index,
 				});
+				if (content === "assess") console.log(groups.last());
 			} else {
 				groups[groupIndex].indices.push(index);
 				groups[groupIndex].levels.push(level);
+				if (content === "assess") console.log(groups[groupIndex]);
 			}
 		}
 	}
@@ -320,7 +319,8 @@ function processDocument(doc: Editor): NoteList {
 		for (let i = 0; i < group.indices.length; i++) {
 			const index = group.indices[i];
 			const level = group.levels[i];
-			if (levels[index + 1] > level || (levels[index + 1] == level && listIndices[index + 1] == listIndices[index] + 1)) {
+			if (levels[index + 1] > level || 
+					levels[index + 1] == level && listIndices[index + 1] == listIndices[index] + 1) {
 				parents.push(index);
 				groups[groupIndex].ref = index;
 			}
@@ -358,12 +358,12 @@ function processDocument(doc: Editor): NoteList {
 			} else {
 				groups[groupIndex].id = newId;
 			}
-			group.indices.forEach((index) => ids[index] = newId);
+			group.indices.forEach((index) => items[index].id = newId);
 		}
 	}
 
 	// console.log("processNotes() groups:", groups);
-	return {listIndices, contents, ids, lines, levels, groups, warningLines, warnings};
+	return {listIndices, listItems: items, lines, levels, groups, warningLines, warnings};
 }
 
 function proofreadNotes(editor: Editor, library: NoteList) {
@@ -415,21 +415,19 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 	}
 
 	// recursively iterates through list to generate a list of paths
-	const paths = noteTree(noteList.contents, noteList.ids, noteList.levels, []);
+	const paths = noteTree(noteList.listItems, noteList.levels, []);
 	// console.log("updateNotes(): parsed note tree. paths:", paths);
 
 	// update the props tag for each note
 	for (let i = 0; i < noteList.lines.length; i++) {
-		const { content, type } = parseContent(noteList.contents[i]);
-		const id = noteList.ids[i];
+		const item = noteList.listItems[i];
 		const lineNumber = noteList.lines[i];
 		const path = paths[i];
 		const line = doc.getLine(lineNumber);
-		const study = type === "key word";
 		
 		// update the tag
 		const noteMatch = noteRegex.exec(line);
-		if (noteMatch) {
+		if (noteMatch) { // replace the whole line
 			const indices = (noteMatch as any).indices;
 			const note = parseNote(noteMatch);
 			note.props.path = path;
@@ -442,50 +440,53 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 				{ line: lineNumber, ch: end }
 			);
 		} else { // add properties tag
+			const study = item.type === "key word";
 			const props = createNoteProperties(study);
 			props.path = path;
 
 			let addId = false;
-			const idTagMatch = /#\\w*$/.exec(line.trim());
-			if (!idTagMatch && id !== undefined) {
+			const idTagMatch = /#\w*$/.exec(line.trim());
+			if (!idTagMatch && item.id !== undefined) {
 				addId = true;
+				console.log("add id to", item.content, line.trim(), idTagMatch);
 			}
 			
+			const start = line.trimEnd().length;
 			editor.replaceRange(
-				" " + (addId ? "#" + id + " " : "") + createNoteTag(props, true), 
-				{ line: lineNumber, ch: line.length }
+				" " + (addId ? "#" + item.id + " " : "") + createNoteTag(props, true), 
+				{ line: lineNumber, ch: start }
 			);
 		}
 	}
 
-	console.log(`updateNotes(): updated ${noteList.contents.length} notes`);
+	console.log(`updateNotes(): updated ${noteList.listItems.length} notes`);
 }
 
 // input: array of note content and associated line number and indent level
 // initially called under the mind map title
-function noteTree(notes: string[], ids: (string | undefined)[], levels: number[], path: string[]): string[][] {
+function noteTree(items: ListItem[], levels: number[], path: string[]): string[][] {
 	// get indices of lines of immediate children
 	const notesAtCurrentLevel: number[] = [];
-	for (let i = 0; i < notes.length; i++) { // iterate over each entry
+	for (let i = 0; i < items.length; i++) { // iterate over each entry
 		if (levels[i] == path.length) {
 			notesAtCurrentLevel.push(i); // add index of immediate child
 			// console.log(notes[i], i);
 		}
 	}
-	notesAtCurrentLevel.push(notes.length);
+	notesAtCurrentLevel.push(items.length);
 
 	// iterate over immediate children
 	let paths: string[][] = []; // path accumulator
 	for (let index = 0; index < notesAtCurrentLevel.length - 1; index++) {
 		const i = notesAtCurrentLevel[index];
-		let self = toNoteID(notes[i] ? notes[i] : ids[i]!); // convert to id
+		let self = toNoteID(items[i].content ? items[i].content : items[i].id!); // convert to id
 		let newPath = path.concat(self);
 		paths.push(newPath);
 		// console.log("added new path", newPath);
 		// indices of slice to pass into next recursion
 		let start = i + 1; 
 		let end = notesAtCurrentLevel[index + 1];
-		paths.push(...noteTree(notes.slice(start, end), ids.slice(start, end), levels.slice(start, end), newPath));
+		paths.push(...noteTree(items.slice(start, end), levels.slice(start, end), newPath));
 	}
 
 	return paths;

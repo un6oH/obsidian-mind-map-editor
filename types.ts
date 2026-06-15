@@ -12,7 +12,7 @@ export interface MapSettings {
   studySettings: FSRSParameters;
 }
 
-export interface ContentInfo {
+export interface ListItem {
 	content: string;
 	type: 'key word' | 'relation' | 'info';
 	id: string | undefined;

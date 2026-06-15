@@ -2,7 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { FSRSParameters, generatorParameters, State } from 'ts-fsrs';
 import { MapProperties, MapSettings, MindMap, Note, Warning } from 'types';
-import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex } from 'helpers';
+import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy } from 'helpers';
 import MindMapEditorPlugin, { dismissWarnings, studyMindMap, updateMapSettings, updateNotes } from 'main';
 
 export class MindMapCreatorModal extends Modal {
@@ -281,31 +281,34 @@ export class MapSettingsEditorModal extends Modal {
 export class NotePropertyEditorModal extends Modal {
 	view: EditorView;
 	note: Note;
+	initialType: string = "";
 
 	constructor(app: App, view: EditorView, noteMatch: RegExpExecArray) {
 		super(app);
 		this.view = view;
 
 		this.note = parseNote(noteMatch);
+		this.initialType = this.note.type;
 		const initialContent = this.note.content;
-		const initialId = this.note.id === undefined ? "" : this.note.id;
+		const initialId = this.note.id;
 
-		let title = this.note.content;
+		let title = "";
 		switch(this.note.type) {
 			case 'key word':
-				title += " (Key word)";
+				title += "[Key word] ";
 				break;
 			case 'relation':
-				title += " (Relation)";
+				title += "[Relation] ";
 				break;
 			case 'info':
-				title += " (Info)";
+				title += "[Info] ";
 				break;
 		}
+		title += this.note.content;
 		this.setTitle(title);
 
 		// displays path
-		new Setting(this.contentEl)
+		const pathDisplay = new Setting(this.contentEl)
       .setDesc(formatPath(this.note.props.path));
 
 		// settings
@@ -318,8 +321,11 @@ export class NotePropertyEditorModal extends Modal {
 					.setPlaceholder(initialContent)
 					.setValue(this.note.content)
 					.onChange((value) => {
-						this.note.content = value.trim();
+						const { content, type } = parseListItem(value)
+						this.note.content = content;
 						this.note.props.path.splice(-1, 1, toNoteID(value));
+						pathDisplay.setDesc(formatPath(this.note.props.path));
+						studyToggle.setValue(canStudy(content));
 					}))
 			.addButton((button) => button
 				.setButtonText("Reset")
@@ -335,14 +341,20 @@ export class NotePropertyEditorModal extends Modal {
 		let unlinkToggle: ToggleComponent;
 		let idField: TextComponent;
 		new Setting(this.contentEl)
-			.setName("Link similar")
-			.setDesc("Will not link to other nodes if disabled")
+			.setName("Force unlink")
+			.setDesc("Node will not merge with similar nodes")
 			.addToggle((toggle) => 
 				unlinkToggle = toggle
 					.setValue(this.note.id === "")
 					.onChange((unlink) => {
-						this.note.id = unlink ? "" : initialId;
-						idField.setValue(unlink ? "" : initialId);
+						if (unlink) {
+							this.note.id = "";
+							idField.setPlaceholder("linking disabled").setValue("");
+						} else {
+							this.note.id = initialId;
+							let newText = initialId ? initialId : "";
+							idField.setPlaceholder(newText).setValue(newText);
+						}
 					})
 			);
 
@@ -351,11 +363,12 @@ export class NotePropertyEditorModal extends Modal {
 			.setDesc("Add a new tag or search existing tags. Letters and numbers only")
 			.addText((text) => 
 				idField = text
-					.setPlaceholder(this.note.id === "" ? "links disabled" : (this.note.id ? this.note.id : ""))
+					.setPlaceholder(this.note.id === "" ? "linking disabled" : (this.note.id ? this.note.id : ""))
 					.setValue(this.note.id ? this.note.id : "")
 					.onChange((value) => {
-						this.note.id = value.replace(/[^a-zA-Z0-9]/, '');
-						unlinkToggle.setValue(value === "" ? true : false);
+						let validId = value.replace(/[^a-zA-Z0-9]/, '');
+						this.note.id = validId;
+						idField.setValue(validId);
 					})
 			)
 			.addButton((button) => button
@@ -363,7 +376,7 @@ export class NotePropertyEditorModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					idField.setValue("");
-					this.note.id = "";
+					this.note.id = undefined;
 				})
 			)
 			.addButton((button) => button
@@ -372,18 +385,21 @@ export class NotePropertyEditorModal extends Modal {
 				.onClick(() => {
 					new IdSuggestModal(app, view, this.note.content, (id: string) => {
 						this.note.id = id;
-						idField.setDisabled(false).setValue(id);
 						unlinkToggle.setValue(false);
+						idField.setValue(id);
 					}).open();
 				})
 			);
 		
 		// toggle to select studyable
+		let studyToggle: ToggleComponent;
 		new Setting(this.contentEl)
 			.setName('Studyable')
-			.addToggle((toggle) => toggle
-				.setValue(this.note.props.study)
-				.onChange((value) => this.note.props.study = value));
+			.addToggle((toggle) => 
+				studyToggle = toggle
+					.setValue(this.note.props.study)
+					.onChange((value) => this.note.props.study = value)
+			);
 
 		// card params
 		const card = this.note.props.card!;
@@ -428,16 +444,25 @@ export class NotePropertyEditorModal extends Modal {
 					.setButtonText('Remove card')
 					.setCta()
 					.onClick(() => {
-						this.note.props.card = card;
 						this.close();
 						this.deleteCard(indices);
 					})
 			})
 			.addButton((btn) => {
 				btn
-					.setButtonText('OK')
+					.setButtonText('Dismiss changes')
+					.setCta()
+					.onClick(() => this.close())
+			})
+			.addButton((btn) => {
+				btn
+					.setButtonText('Apply changes')
 					.setCta()
 					.onClick(() => {
+						if (this.note.content === "" && !this.note.id) {
+							new Notice("Invalid card");
+							return;
+						}
 						this.note.props.card = card;
 						this.close();
 						this.updateData(indices);
@@ -447,10 +472,8 @@ export class NotePropertyEditorModal extends Modal {
 	}
 
 	updateData(indices: number[][]) {
-		let content = this.note.content.trim();
-		if (this.note.id === null) {
-			content += " #";
-		} else if (this.note.id) {
+		let content = this.note.content;
+		if (this.note.id !== undefined) {
 			content += " #" + this.note.id;
 		}
 		const contentEdit = this.view.state.update({

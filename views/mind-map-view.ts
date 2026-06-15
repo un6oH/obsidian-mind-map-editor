@@ -482,7 +482,7 @@ export class MindMapView extends ItemView {
 
       // console.log("loadMindMap()", newNode);
       if (newNode) { // only add unique nodes
-        const {content, hidden} = formatContent(document, note.content, this.viewImage);
+        const {content, hidden} = formatContent(document, note.content, note.type, this.viewImage);
         // console.log(note.content, content, hidden);
         const node: Node = {
           id: nodeId, 

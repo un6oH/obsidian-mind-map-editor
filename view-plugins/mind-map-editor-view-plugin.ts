@@ -11,7 +11,7 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseContent } from 'helpers';
+import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem } from 'helpers';
 import { Warning } from 'types';
 import { State } from 'ts-fsrs';
 
@@ -103,7 +103,7 @@ class NoteDataWidget extends WidgetType {
 
     this.level = noteMatch[1].length;
 
-    const { content, id, type } = parseContent(noteMatch[3]);
+    const { content, id, type } = parseListItem(noteMatch[3]);
     this.content = content;
     this.id = id;
     this.type = type;
@@ -142,7 +142,6 @@ class NoteDataWidget extends WidgetType {
 
     block.appendChild(icon);
     block.appendText(this.content ? this.content : "");
-    if (this.type === 'relation') block.appendText(":");
     if (this.id !== undefined) {
       const tag = document.createElement('span');
       tag.addClass('cm-hashtag');

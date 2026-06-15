@@ -1,5 +1,5 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } from "ts-fsrs";
-import { MapProperties, NoteProperties, Note, MindMap, MapSettings, ContentInfo } from "types";
+import { MapProperties, NoteProperties, Note, MindMap, MapSettings, ListItem } from "types";
 import { interpolateRainbow, style } from "d3";
 
 export const noteTagOpen = "%%note";
@@ -121,9 +121,9 @@ export function parseMapTag(string: string): MapSettings {
 	};
 }
 
-export function parseContent(content: string): ContentInfo {
+export function parseListItem(content: string): ListItem {
 	content = content.trim();
-	const result: ContentInfo = {
+	const result: ListItem = {
 		content: content, 
 		type: 'key word', 
 		id: undefined
@@ -139,17 +139,14 @@ export function parseContent(content: string): ContentInfo {
 	switch (content.slice(-1)) {
 		case ':':
 			result.type = 'relation';
-			result.content = content.slice(0, -1).trim();
 			break;
 		case ')':
 			if (content.startsWith('(')) {
 				result.type = 'info';
-				result.content = content.slice(1, -1).trim();
 			}
 			break;
 	}
 	
-	// console.log("parseContent()", result);
 	return result;
 }
 
@@ -162,7 +159,7 @@ export function parseNote(match: RegExpExecArray): Note {
 
 	note.listIndex = parseListIndex(match[2]);
 
-	const { content, id, type } = parseContent(match[3]);
+	const { content, id, type } = parseListItem(match[3]);
 	note.content = content;
 	note.id = id;
 	note.type = type;
@@ -175,7 +172,7 @@ export function parseNote(match: RegExpExecArray): Note {
 // return "" to force ignoring groups
 // return null to allow regrouping
 export function getNoteId(content: string): { content: string, id: string | undefined } {
-	content.trim();
+	content = content.trim();
 
 	const idTagMatch = idTagRegex.exec(content);
 	if (idTagMatch) { // id specified
@@ -222,29 +219,15 @@ export function parseCard(props: string[]): Card {
 	}
 }
 
-export function studyable(content: string): boolean {
-	const isRelation = /:$/.exec(content) != null; // content ends with ":"
-	const containsClozes = /{.+?}/.test(content); // content includes clozes
-	return !isRelation || containsClozes;
-}
-
-interface NoteType {
-  keyWord: boolean;
-  study: boolean;
-}
-export function noteType(content: string): NoteType {
-  const type = {
-    keyWord: true, 
-    study: true, 
-  }
-  if (content.trim().endsWith(":")) {
-    type.keyWord = false;
-  }
-  if (!type.keyWord) {
-    const containsClozes = /{.+?}/.test(content);
-    type.study = containsClozes;
-  }
-  return type;
+export function canStudy(content: string): boolean {
+	const item = parseListItem(content);
+	switch(item.type) {
+		case 'key word': return true
+		case 'info': return false
+		case 'relation':
+			const containsClozes = /{.+?}/.test(content);
+			return containsClozes;
+	}
 }
 
 const NOTE_ID_MAX_LENGTH = 12;
@@ -307,7 +290,7 @@ export function createNoteString(note: Note): string {
 	return str;
 }
 
-export function createNoteTag(props: NoteProperties, includeTags: boolean): string {
+export function createNoteTag(props: NoteProperties, includeTags?: boolean): string {
 	// console.log("createNoteTag(): props:", props);
 	let string = includeTags ? noteTagOpen : "";
 
@@ -397,7 +380,7 @@ interface TextFragment {
 	image: boolean;
 	fragments: TextFragment[], 
 }
-export function formatContent(document: Document, text: string, viewImageCallback: (url: string) => void): { content: Element, hidden: Element } {
+export function formatContent(document: Document, text: string, type: string, viewImageCallback: (url: string) => void): { content: Element, hidden: Element } {
 	const fragments: TextFragment[] = [];
 	const imageRegex = new RegExp(imagePattern, 'g');
 	const infoRegex = new RegExp(infoPattern);
