@@ -1,5 +1,5 @@
 import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
-import { MapProperties, Note, NoteProperties, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
+import { MapProperties, Note, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
 import { toPathString, colour, cardStateColours, formatContent } from 'helpers';
 import * as d3 from 'd3';
 import { Card, fsrs, FSRS, generatorParameters, Grade, Grades, IPreview, Rating, RecordLog, show_diff_message, State } from 'ts-fsrs';
@@ -471,7 +471,7 @@ export class MindMapView extends ItemView {
       nodeIndex++;
 
       const level = path.length - 1;
-      const study = note.props.study;
+      const study = note.card;
       const listIndex = note.listIndex;
       let source = path.length == 1 ? centreNode!.id : toPathString(note.props.path.slice(0, -1));
       const origin = source;

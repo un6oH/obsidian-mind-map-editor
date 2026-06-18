@@ -30,6 +30,7 @@ If your plugin does not need CSS, delete this file.
   background-color: rgba(255, 255, 255, 0.103);
   padding: 0 0.25em 0 0;
   cursor: var(--cursor-link);
+  margin-left: 0.5em;
 }
 
 .widget-note:hover {

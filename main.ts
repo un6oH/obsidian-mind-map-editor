@@ -2,8 +2,8 @@ import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidi
 import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap, ListItem } from 'types';
-import { noteTagRegex, mapTagRegex, parseMindMap, parseNoteProps, createNoteProperties, toNoteID, toPathString, createNoteTag, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, noteTagOpen, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem } from 'helpers';
+import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
+import { mapTagRegex, parseMindMap, createCardTag, toNoteID, toPathString, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
 // Remember to rename these classes and interfaces!
 
@@ -415,81 +415,69 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 	}
 
 	// recursively iterates through list to generate a list of paths
-	const paths = noteTree(noteList.listItems, noteList.levels, []);
+	// const paths = noteTree(noteList.listItems, noteList.levels, []);
 	// console.log("updateNotes(): parsed note tree. paths:", paths);
 
 	// update the props tag for each note
 	for (let i = 0; i < noteList.lines.length; i++) {
 		const item = noteList.listItems[i];
 		const lineNumber = noteList.lines[i];
-		const path = paths[i];
+		// const path = paths[i];
 		const line = doc.getLine(lineNumber);
 		
-		// update the tag
 		const noteMatch = noteRegex.exec(line);
-		if (noteMatch) { // replace the whole line
-			const indices = (noteMatch as any).indices;
+		if (noteMatch) { // note has card tag
 			const note = parseNote(noteMatch);
-			note.props.path = path;
-			
-			const start = indices[3][0] // start of content
-			const end = indices[0][1]; // end of line
-			editor.replaceRange(
-				createNoteString(note), 
-				{ line: lineNumber, ch: start },
-				{ line: lineNumber, ch: end }
-			);
-		} else { // add properties tag
-			const study = item.type === "key word";
-			const props = createNoteProperties(study);
-			props.path = path;
-
-			let addId = false;
-			const idTagMatch = /#\w*$/.exec(line.trim());
-			if (!idTagMatch && item.id !== undefined) {
-				addId = true;
-				console.log("add id to", item.content, line.trim(), idTagMatch);
+			// replace id or remove card
+			let replace = false;
+			if (note.id !== item.id) {
+				replace = true;
+				note.id = item.id;
 			}
-			
-			const start = line.trimEnd().length;
-			editor.replaceRange(
-				" " + (addId ? "#" + item.id + " " : "") + createNoteTag(props, true), 
-				{ line: lineNumber, ch: start }
-			);
+			if (!canStudy(note.content, note.type)) {
+				replace = true;
+				note.card = null;
+			}
+			if (replace) {
+				const indices = (noteMatch as any).indices;
+				const start = indices[3][0]; // start of content
+				const end = indices[0][1]; // end of line	
+				note.id = item.id;
+				editor.replaceRange(
+					createNoteString(note), 
+					{ line: lineNumber, ch: start },
+					{ line: lineNumber, ch: end }
+				);
+			}
+		} else { // note does not have card tag
+			const listItemMatch = listItemRegex.exec(line);
+			if (!listItemMatch) continue;
+			const { content, id, type } = parseListItem(listItemMatch[3]);
+			const note: Note = { listIndex: 0, content, id, type, card: null };
+			// replace id or add card
+			let replace = false;
+			if (id !== item.id) {
+				replace = true;
+			  note.id = item.id;
+			}
+			if (canStudy(note.content, note.type)) {
+				replace = true;
+				note.card = createEmptyCard();
+			}
+			if (replace) {
+				const indices = (listItemMatch as any).indices;
+				const start = indices[3][0] // start of content
+				const end = indices[0][1]; // end of line	
+				editor.replaceRange(
+					createNoteString(note), 
+					{ line: lineNumber, ch: start },
+					{ line: lineNumber, ch: end }
+				);
+			}
 		}
 	}
 
 	console.log(`updateNotes(): updated ${noteList.listItems.length} notes`);
-}
-
-// input: array of note content and associated line number and indent level
-// initially called under the mind map title
-function noteTree(items: ListItem[], levels: number[], path: string[]): string[][] {
-	// get indices of lines of immediate children
-	const notesAtCurrentLevel: number[] = [];
-	for (let i = 0; i < items.length; i++) { // iterate over each entry
-		if (levels[i] == path.length) {
-			notesAtCurrentLevel.push(i); // add index of immediate child
-			// console.log(notes[i], i);
-		}
-	}
-	notesAtCurrentLevel.push(items.length);
-
-	// iterate over immediate children
-	let paths: string[][] = []; // path accumulator
-	for (let index = 0; index < notesAtCurrentLevel.length - 1; index++) {
-		const i = notesAtCurrentLevel[index];
-		let self = toNoteID(items[i].content ? items[i].content : items[i].id!); // convert to id
-		let newPath = path.concat(self);
-		paths.push(newPath);
-		// console.log("added new path", newPath);
-		// indices of slice to pass into next recursion
-		let start = i + 1; 
-		let end = notesAtCurrentLevel[index + 1];
-		paths.push(...noteTree(items.slice(start, end), levels.slice(start, end), newPath));
-	}
-
-	return paths;
 }
 
 export function isMindMap(editor: Editor): string { // returns map title if map setup tags exist

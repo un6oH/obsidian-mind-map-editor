@@ -1,20 +1,30 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } from "ts-fsrs";
-import { MapProperties, NoteProperties, Note, MindMap, MapSettings, ListItem } from "types";
+import { MapProperties, Note, MindMap, MapSettings, ListItem } from "types";
 import { interpolateRainbow, style } from "d3";
 
-export const noteTagOpen = "%%note";
-export const noteTagClose = "%%";
-export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
+export const listItemPattern = "(\\t*)(\\d+. |- )(.*)";
+export const listItemRegex = RegExp(listItemPattern, 'd');
+
+export const cardTagOpen = "%%card";
+export const cardTagClose = "%%";
+export const cardTagPattern = `${cardTagOpen}(.*?)${cardTagClose}`;
+export const cardTagRegex = RegExp(cardTagPattern, 'd');
+// export const noteTagOpen = "%%note";
+// export const noteTagClose = "%%";
+// export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
+// export const noteRegex = RegExp(notePattern, 'd');
+export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${cardTagOpen}(?<card>.*?)${cardTagClose}`;
 export const noteRegex = RegExp(notePattern, 'd');
 // [1]: list delimiter
 // [2]: content
-// [3]: props tag
+// [3]: card tag
 
-export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
-export const noteTagRegex = RegExp(noteTagPattern, 'd');
+// export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
+// export const noteTagRegex = RegExp(noteTagPattern, 'd');
 
 export const idTagPattern = "#(\\w*)$";
 export const idTagRegex = RegExp(idTagPattern, 'd');
+
 
 export const mapTagOpen = "%%map";
 export const mapTagClose = "%%";
@@ -39,18 +49,7 @@ export const errorRegex = RegExp(errorPattern, 'md');
 // [2]: type
 
 export function parseMindMap(text: string): MindMap | null {
-	const mindMap: MindMap = {
-		map: {
-			title: "title", 
-      id: "", 
-			settings: { 
-				separateHeadings: false, 
-				crosslink: true, 
-				studySettings: generatorParameters(), 
-			}, 
-		}, 
-		notes: []
-	};
+	const mindMap = {} as MindMap;
 
 	// title
 	const titleRegex = new RegExp("# (.*?)$", 'm');
@@ -85,12 +84,30 @@ export function parseMindMap(text: string): MindMap | null {
 	return mindMap;
 }
 
-export function createNoteProperties(study: boolean): NoteProperties {
-	return {
-		path: [], 
-		study: study, 
-		card: study ? createEmptyCard(Date.now()) : null, 
+export function noteTree(items: ListItem[], levels: number[], path: string[]): string[][] {
+	// get indices of lines of immediate children
+	const notesAtCurrentLevel: number[] = [];
+	for (let i = 0; i < items.length; i++) { // iterate over each entry
+		if (levels[i] == path.length) {
+			notesAtCurrentLevel.push(i); // add index of immediate child
+			// console.log(notes[i], i);
+		}
 	}
+	notesAtCurrentLevel.push(items.length);
+
+	// iterate over immediate children
+	let paths: string[][] = []; // path accumulator
+	for (let index = 0; index < notesAtCurrentLevel.length - 1; index++) {
+		const i = notesAtCurrentLevel[index];
+		let self = toNoteID(items[i].content ? items[i].content : items[i].id!); // convert to id
+		let newPath = path.concat(self);
+		paths.push(newPath);
+		let start = i + 1; 
+		let end = notesAtCurrentLevel[index + 1];
+		paths.push(...noteTree(items.slice(start, end), levels.slice(start, end), newPath));
+	}
+
+	return paths;
 }
 
 export function createBlankNote(): Note {
@@ -99,7 +116,7 @@ export function createBlankNote(): Note {
     content: "", 
 		type: 'key word', 
 		id: undefined, 
-    props: createNoteProperties(false), 
+    card: null
   }
 }
 
@@ -121,6 +138,7 @@ export function parseMapTag(string: string): MapSettings {
 	};
 }
 
+// content = listItemMatch[3]
 export function parseListItem(content: string): ListItem {
 	content = content.trim();
 	const result: ListItem = {
@@ -150,8 +168,7 @@ export function parseListItem(content: string): ListItem {
 	return result;
 }
 
-// parse note entry
-// any line starting with "- "
+// parse note with or without card
 // return note with assigned properties
 // must pass in a RegExpExecArray matched with the note pattern
 export function parseNote(match: RegExpExecArray): Note {
@@ -159,13 +176,21 @@ export function parseNote(match: RegExpExecArray): Note {
 
 	note.listIndex = parseListIndex(match[2]);
 
-	const { content, id, type } = parseListItem(match[3]);
+	// parse the card
+	let listItem = match[3];
+	const cardTagMatch = cardTagRegex.exec(match[3]);
+	if (cardTagMatch) {
+		note.card = parseCard(cardTagMatch[1]);
+		listItem = listItem.slice(0, cardTagMatch.index);
+	} else {
+		note.card = null;
+	}
+
+	const { content, id, type } = parseListItem(listItem);
 	note.content = content;
 	note.id = id;
 	note.type = type;
-  
-	// parse the props string
-	note.props = parseNoteProps(match[4]);
+
 	return note;
 }
 
@@ -190,22 +215,24 @@ export function getNoteId(content: string): { content: string, id: string | unde
 }
 
 // parses contents (<props> group) of note tag
-export function parseNoteProps(str: string): NoteProperties {
-	const properties = createNoteProperties(true);
-	const props = str.split(';');
+// export function parseNoteProps(str: string): NoteProperties {
+// 	const properties = createNoteProperties(true);
+// 	const props = str.split(';');
 	
-	properties.path = parsePath(props[0]);
-	properties.study = props[1] === "true";
-	properties.card = properties.study ? parseCard(props.slice(2)) : null;
+// 	properties.path = parsePath(props[0]);
+// 	properties.study = props[1] === "true";
+// 	properties.card = properties.study ? parseCard(props.slice(2)) : null;
 
-	return properties;
-}
+// 	return properties;
+// }
 
 export function parsePath(str: string): string[] {
 	return str.split('\\');
 }
 
-export function parseCard(props: string[]): Card {
+export function parseCard(tag: string): Card {
+	const props = tag.split(';');
+
 	return {
 		due: new Date(props[0]),
     stability: parseFloat(props[1]),
@@ -219,9 +246,8 @@ export function parseCard(props: string[]): Card {
 	}
 }
 
-export function canStudy(content: string): boolean {
-	const item = parseListItem(content);
-	switch(item.type) {
+export function canStudy(content: string, type: 'key word' | 'relation' | 'info'): boolean {
+	switch(type) {
 		case 'key word': return true
 		case 'info': return false
 		case 'relation':
@@ -244,83 +270,66 @@ export function toNoteID(str: string, title: boolean = false): string {
 	const alphaNumeric = str.replace(/[^a-zA-Z0-9]/g, ''); 
 	const lowercase = alphaNumeric.toLowerCase();
 	return lowercase
-
-	// if (lowercase.length > NOTE_ID_MAX_LENGTH) {
-	// 	let result = "";
-	// 	let interval = (lowercase.length + 0.5) / NOTE_ID_MAX_LENGTH;
-	// 	for (let i = 0; i < lowercase.length; i += interval) {
-	// 		result += lowercase.charAt(i);
-	// 	}
-	// 	// console.log(result);
-	// 	return result;
-	// } else {
-	// 	// console.log(lowercase);
-	// 	return lowercase
-	// }
 }
-
-// interface IdMap {
-// 	content: string[];
-// 	ids: (string | null)[];
-// }
-
-// export function assignID(content: string, id: string | null, map: IdMap): {id: string, idMap: IdMap} {
-// 	let contentMatch = map.content.indexOf(content);
-// 	let newMap = map;
-// 	let newId = id;
-// 	if (contentMatch != -1) {
-// 		let idMatch = map.ids.indexOf(id);
-// 		if (idMatch != -1) {
-
-// 		}
-// 	} else {
-
-// 	}
-// }
 
 export function createNoteString(note: Note): string {
 	// let str = note.listIndex == 0 ? "- " : `${note.listIndex}. `;
 	let str = note.content;
 	if (note.id !== undefined) {
-		str += " #" + note.id + " ";
-	} else {
-		str += " ";
+		str += " #" + note.id;
 	}
-	str += createNoteTag(note.props, true);
+	if (note.card) str += createCardTag(note.card, true);
 	return str;
 }
 
-export function createNoteTag(props: NoteProperties, includeTags?: boolean): string {
-	// console.log("createNoteTag(): props:", props);
-	let string = includeTags ? noteTagOpen : "";
+// export function createNoteTag(props: NoteProperties, includeTags?: boolean): string {
+// 	// console.log("createNoteTag(): props:", props);
+// 	let string = includeTags ? noteTagOpen : "";
 
-	// basic properties
-	[ 
-		toPathString(props.path),
-		String(props.study), 
-	].forEach(str => string += str + ';');
+// 	// basic properties
+// 	[ 
+// 		toPathString(props.path),
+// 		String(props.study), 
+// 	].forEach(str => string += str + ';');
 
-	// note does not have card, but needs one
-	if (props.study && !props.card) props.card = createEmptyCard();
+// 	// note does not have card, but needs one
+// 	if (props.study && !props.card) props.card = createEmptyCard();
 
-	// add card properties
-	if (props.card) {
-		const cardPropStrings = [
-			props.card.due.toISOString(), 
-			props.card.stability.toString(),
-			props.card.difficulty.toString(),
-			props.card.elapsed_days.toString(),
-			props.card.scheduled_days.toString(),
-			props.card.reps.toString(),
-			props.card.lapses.toString(),
-			props.card.state.toString(), 
-			props.card.last_review ? props.card.last_review.toISOString() : ""
-		];
-		cardPropStrings.forEach(str => string += str + ';');
-	}
+// 	// add card properties
+// 	if (props.card) {
+// 		const cardPropStrings = [
+// 			props.card.due.toISOString(), 
+// 			props.card.stability.toString(),
+// 			props.card.difficulty.toString(),
+// 			props.card.elapsed_days.toString(),
+// 			props.card.scheduled_days.toString(),
+// 			props.card.reps.toString(),
+// 			props.card.lapses.toString(),
+// 			props.card.state.toString(), 
+// 			props.card.last_review ? props.card.last_review.toISOString() : ""
+// 		];
+// 		cardPropStrings.forEach(str => string += str + ';');
+// 	}
 
-	string += includeTags ? noteTagClose : "";
-	return string;
+// 	string += includeTags ? noteTagClose : "";
+// 	return string;
+// }
+export function createCardTag(card: Card, includeTags?: boolean): string {
+	let tag = includeTags ? cardTagOpen : "";
+	const data = [
+		card.stability.toString(),
+		card.due.toISOString(),
+		card.difficulty.toString(),
+		card.elapsed_days.toString(),
+		card.scheduled_days.toString(),
+		card.reps.toString(),
+		card.lapses.toString(),
+		card.state.toString(), 
+		card.last_review ? card.last_review.toISOString() : ""
+	];
+	data.forEach(str => tag += str + ';');
+	tag += includeTags ? cardTagClose : "";
+	return tag;
 }
 
 // creates map tag

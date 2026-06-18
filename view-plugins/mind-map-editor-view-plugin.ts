@@ -11,9 +11,9 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, noteTagPattern, mapTagPattern, mapTagOpen, mapTagClose, noteTagOpen, noteTagClose, errorPattern, parseNoteProps, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem } from 'helpers';
-import { Warning } from 'types';
-import { State } from 'ts-fsrs';
+import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseCard } from 'helpers';
+import { ListItem, Note, Warning } from 'types';
+import { Card, State } from 'ts-fsrs';
 
 class MapStudyParametersWidget extends WidgetType {
   app: App;
@@ -43,117 +43,63 @@ class MapStudyParametersWidget extends WidgetType {
   }
 }
 
-// class NodeIconWidget extends WidgetType {
-//   study: boolean;
-//   level: number;
-//   state: State | null;
-
-//   constructor(study: boolean, level: number, state: State | null) {
-//     super();
-//     this.study = study;
-//     this.level = level;
-//     this.state = state;
-//   }
-
-//   toDOM() {
-//     const span = document.createElement('span');
-//     // span.addClass("widget-node-icon");
-//     const icon = document.createElementNS("http://www.w3.org/2000/svg", 'svg');
-//     // icon.setAttributeNS(null, "width", "100%");
-//     // icon.setAttributeNS(null, "height", "24");
-//     icon.setAttributeNS(null, "viewBox", "0 0 24 24");
-//     const circle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
-//     icon.addClass("widget-node-icon");
-//     circle.setAttributeNS(null, "cx", "12");
-//     circle.setAttributeNS(null, "cy", "12");
-//     // circle.setAttributeNS(null, "w", "5");
-//     // circle.setAttributeNS(null, "h", "5");
-//     circle.setAttributeNS(null, "r", this.study ? "10" : "3");
-//     circle.setAttributeNS(null, "fill", this.study ? cardStateColours[this.state!] : colour(this.level));
-//     circle.setAttributeNS(null, "stroke", colour(this.level));
-//     circle.setAttributeNS(null, "stroke-width", this.study ? "2" : "0");
-//     icon.appendChild(circle);
-//     span.appendChild(icon);
-//     return span;
-//   }
-  
-//   ignoreEvent() {
-//     return false;
-//   }
-// }
-
 class NoteDataWidget extends WidgetType {
   app: App = {} as App;
   view: EditorView = {} as EditorView;
-  noteMatch: RegExpExecArray;
-  indices: number[][];
+  match: RegExpExecArray;
+  note: Note;
   level: number;
-  content: string;
-  id: string | undefined;
-  type: 'key word' | 'relation' | 'info' = 'key word';
-  isKeyWord: boolean = false;
-  study: boolean = false;
-  state: State = {} as State;
 
-  constructor(app: App, noteMatch: RegExpExecArray) {
+  // match: match of list item or note
+  constructor(app: App, match: RegExpExecArray) {
     super();
     this.app = app;
-    this.noteMatch = noteMatch;
-    this.indices = (noteMatch as any).indices;
-
-    this.level = noteMatch[1].length;
-
-    const { content, id, type } = parseListItem(noteMatch[3]);
-    this.content = content;
-    this.id = id;
-    this.type = type;
-
-    const propStrings = noteMatch[4].split(';');
-    this.study = propStrings[1] === 'true';
-    if (this.study) {
-      this.state = parseFloat(propStrings[9]);
-    }
+    this.match = match;
+    this.note = parseNote(match);
+    this.level = match[1].length;
   }
 
   toDOM(view: EditorView) {
+    // icon container
     const icon = document.createElementNS("http://www.w3.org/2000/svg", 'svg');
     icon.addClass("widget-node-icon");
     icon.setAttributeNS(null, "viewBox", "0 0 24 24");
     icon.setAttributeNS(null, "width", "24px");
     icon.setAttributeNS(null, "height", "24px");
+    // main circle
     const circle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
     circle.setAttributeNS(null, "cx", "12");
     circle.setAttributeNS(null, "cy", "12");
-    circle.setAttributeNS(null, "r", this.study ? "12" : "6");
+    circle.setAttributeNS(null, "r", this.note.card ? "12" : "6");
     circle.setAttributeNS(null, "fill", colour(this.level));
     icon.appendChild(circle);
-    if (this.study) {
+    // inner circle / status indicator
+    if (this.note.card) {
       const innerCircle = document.createElementNS("http://www.w3.org/2000/svg", 'circle');
       innerCircle.setAttributeNS(null, "cx", "12");
       innerCircle.setAttributeNS(null, "cy", "12");
       innerCircle.setAttributeNS(null, "r", "8");
-      innerCircle.setAttributeNS(null, "fill", cardStateColours[this.state]);
+      innerCircle.setAttributeNS(null, "fill", cardStateColours[this.note.card.state]);
       icon.appendChild(innerCircle);
     }
 
     const block = document.createElement('span');
     block.addClass('widget-note');
-    block.addClass(this.study ? 'widget-note-study' : 'widget-note-nostudy');
+    block.addClass(this.note.card ? 'widget-note-study' : 'widget-note-nostudy');
 
     block.appendChild(icon);
-    block.appendText(this.content ? this.content : "");
-    if (this.id !== undefined) {
+    block.appendText(this.note.content ? this.note.content : "");
+    if (this.note.id !== undefined) {
       const tag = document.createElement('span');
       tag.addClass('cm-hashtag');
-      tag.textContent = "#" + this.id;
-      block.appendText(this.content ? " (" : "(");
+      tag.textContent = "#" + this.note.id;
+      block.appendText(this.note.content ? " (" : "(");
       block.appendChild(tag);
       block.appendText(")");
     }
 
     block.onclick = () => {
-      // console.log("NoteDataWidget() indices", this.indices);
-      new NotePropertyEditorModal(this.app, view, this.noteMatch).open();
+      new NotePropertyEditorModal(this.app, view, this.match).open();
     };
 
     return block;
@@ -241,10 +187,9 @@ class ErrorWidget extends WidgetType {
 
 const mapTagOpenLength = mapTagOpen.length;
 const mapTagCloseLength = mapTagClose.length;
-const noteTagOpenLength = noteTagOpen.length;
-const noteTagCloseLength = noteTagClose.length;
+// const noteTagOpenLength = noteTagOpen.length;
+// const noteTagCloseLength = noteTagClose.length;
 export function createMindMapEditorViewPlugin(plugin: Plugin) {
-
   return ViewPlugin.fromClass(
     class MindMapEditorViewPlugin implements PluginValue {
       decorations: DecorationSet;
@@ -268,28 +213,24 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
         for (let { from, to } of view.visibleRanges) {
           const text = view.state.doc.sliceString(from, to);
 
-          let noteMatch;
-          const noteRegex = RegExp(notePattern, 'dgm');
+          let listItemMatch;
+          const listItemRegex = RegExp(listItemPattern, 'dgm');
           // find every match in the full text
-          while ((noteMatch = noteRegex.exec(text)) !== null) {
-            (noteMatch as any).indices.forEach(
-              (pair: number[], i: number, array: number[][]) => array[i] = [pair[0] + from, pair[1] + from]
-            );
-            let indices: number[][] = (noteMatch as any).indices;
-
-            const note = parseNote(noteMatch);
-            const study = note.props.study;
-            // node icon
-            // let iconDeco = Decoration.widget({
-            //   widget: new NodeIconWidget(study, noteMatch[1].length, study ? note.props.card!.state : null), 
-            // });
-            // decorations.push({ start: indices[2][1], end: indices[2][1], deco: iconDeco });
+          while ((listItemMatch = listItemRegex.exec(text)) !== null) {
+            // check for card
+            const indices = (listItemMatch as any).indices;
+            indices.forEach((pair: number[], i: number, array: number[][]) => 
+              array[i] = [pair[0] + from, pair[1] + from]);
 
             const deco = Decoration.replace({
-              widget: new NoteDataWidget(plugin.app, noteMatch),
+              widget: new NoteDataWidget(plugin.app, listItemMatch),
               inclusive: false
             });
-            decorations.push({ start: indices[3][0], end: indices[0][1], deco });
+
+            const cardTagMatch = cardTagRegex.exec(listItemMatch[0]);
+            const start = cardTagMatch ? cardTagMatch.index + indices[0][0] : indices[0][1];
+            const end = indices[0][1];
+            decorations.push({ start, end, deco });
           }
           
           let mapMatch;
@@ -319,18 +260,6 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
             });
             decorations.push({start, end, deco});
           }
-
-          // let tabMatch;
-          // const tabMatchRegex = RegExp("^\\t+", 'dgm');
-          // while ((tabMatch = tabMatchRegex.exec(text)) !== null) {
-          //   let indices: number[][] = (tabMatch as any).indices;
-          //   const start = indices[0][0];
-          //   const end = indices[0][1];
-          //   const deco = Decoration.mark({
-          //     class: "mark-tabs"
-          //   });
-          //   decorations.push({start, end, deco});
-          // }
 
           let spaceMatch;
           const spaceMatchRegex = RegExp("\\t+?( +)|( +)\\t+?", 'dgm');

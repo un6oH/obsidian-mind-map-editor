@@ -18,18 +18,18 @@ export interface ListItem {
 	id: string | undefined;
 }
 
-export interface NoteProperties {
-  path: string[]; // all parents
-  study: boolean; // whether the node can be studied
-  card: Card | null; // null if the node is not studyable
-}
+// export interface NoteProperties {
+//   path: string[]; // all parents
+//   study: boolean; // whether the node can be studied
+//   card: Card | null; // null if the node is not studyable
+// }
 
 export interface Note {
   listIndex: number; // number in list. 0 if unordered list
   content: string; // full content in markdown
   type: 'key word' | 'relation' | 'info';
   id: string | undefined; // "" if empty, null to force unlink
-  props: NoteProperties; 
+  card: Card | null; // null if the node is not studyable
 }
 
 // stores content, index, and level of every instance of the same content
@@ -46,7 +46,9 @@ export interface NoteGroup {
 export interface MindMap {
   map: MapProperties; 
   notes: Note[];
+  tree: number[][];
 }
+
 export function createMindMap(): MindMap {
   return {
     map: {
@@ -58,7 +60,8 @@ export function createMindMap(): MindMap {
         studySettings: generatorParameters()
       }
     },
-    notes: []
+    notes: [],
+    tree: [],
   }
 }
 

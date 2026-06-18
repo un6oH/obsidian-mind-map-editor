@@ -1,8 +1,8 @@
 import { EditorView } from '@codemirror/view';
 import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
-import { FSRSParameters, generatorParameters, State } from 'ts-fsrs';
-import { MapProperties, MapSettings, MindMap, Note, Warning } from 'types';
-import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createNoteTag, createMapTag, noteTagOpen, noteTagClose, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy } from 'helpers';
+import { Card, createEmptyCard, FSRSParameters, generatorParameters, State } from 'ts-fsrs';
+import { ListItem, MapProperties, MapSettings, MindMap, Note, Warning } from 'types';
+import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createMapTag, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, createNoteString, listItemRegex } from 'helpers';
 import MindMapEditorPlugin, { dismissWarnings, studyMindMap, updateMapSettings, updateNotes } from 'main';
 
 export class MindMapCreatorModal extends Modal {
@@ -135,13 +135,13 @@ export class StudyMindMapModal extends Modal {
 
 		let newCount = 0, learningCount = 0, reviewCount = 0;
 		mindMap.notes.forEach((note) => {
-			if (!note.props.study) return;
-			switch(note.props.card!.state) {
+			if (!note.card) return;
+			switch(note.card.state) {
 				case State.New: newCount++; break;
 				case State.Learning || State.Relearning: learningCount++; break;
 				case State.Review: reviewCount++; break;
 			}
-		})
+		});
 
 		new Setting(this.contentEl)
 			.setHeading()
@@ -281,16 +281,14 @@ export class MapSettingsEditorModal extends Modal {
 export class NotePropertyEditorModal extends Modal {
 	view: EditorView;
 	note: Note;
-	initialType: string = "";
+	initial: Note;
 
-	constructor(app: App, view: EditorView, noteMatch: RegExpExecArray) {
+	constructor(app: App, view: EditorView, listItemMatch: RegExpExecArray) {
 		super(app);
 		this.view = view;
 
-		this.note = parseNote(noteMatch);
-		this.initialType = this.note.type;
-		const initialContent = this.note.content;
-		const initialId = this.note.id;
+		this.note = parseNote(listItemMatch);
+		this.initial = parseNote(listItemMatch);
 
 		let title = "";
 		switch(this.note.type) {
@@ -309,7 +307,7 @@ export class NotePropertyEditorModal extends Modal {
 
 		// displays path
 		const pathDisplay = new Setting(this.contentEl)
-      .setDesc(formatPath(this.note.props.path));
+      .setDesc("show path here");
 
 		// settings
 		let contentField: TextComponent;
@@ -318,23 +316,23 @@ export class NotePropertyEditorModal extends Modal {
 			.setDesc("Warning: changing content will disconnect children and linked notes")
 			.addText((text) => 
 				contentField = text
-					.setPlaceholder(initialContent)
+					.setPlaceholder(this.initial.content)
 					.setValue(this.note.content)
 					.onChange((value) => {
 						const { content, type } = parseListItem(value)
 						this.note.content = content;
-						this.note.props.path.splice(-1, 1, toNoteID(value));
-						pathDisplay.setDesc(formatPath(this.note.props.path));
-						studyToggle.setValue(canStudy(content));
+						studyToggle.setValue(canStudy(content, type));
+						// update the path display 
 					}))
 			.addButton((button) => button
 				.setButtonText("Reset")
 				.setCta()
 				.onClick(() => {
-					contentField.setValue(initialContent);
-					this.note.content = initialContent.trim();
-					this.note.props.path.splice(-1, 1, toNoteID(initialContent));
-					// console.log("reset");
+					contentField.setValue(this.initial.content);
+					this.note.content = this.initial.content;
+					studyToggle.setValue(this.initial.card ? true : false);
+					// update the path display
+					// update the card display
 				})
 			)
 
@@ -351,8 +349,8 @@ export class NotePropertyEditorModal extends Modal {
 							this.note.id = "";
 							idField.setPlaceholder("linking disabled").setValue("");
 						} else {
-							this.note.id = initialId;
-							let newText = initialId ? initialId : "";
+							this.note.id = this.initial.id;
+							let newText = this.initial.id ? this.initial.id : "";
 							idField.setPlaceholder(newText).setValue(newText);
 						}
 					})
@@ -387,6 +385,7 @@ export class NotePropertyEditorModal extends Modal {
 						this.note.id = id;
 						unlinkToggle.setValue(false);
 						idField.setValue(id);
+						// update the content
 					}).open();
 				})
 			);
@@ -397,57 +396,62 @@ export class NotePropertyEditorModal extends Modal {
 			.setName('Studyable')
 			.addToggle((toggle) => 
 				studyToggle = toggle
-					.setValue(this.note.props.study)
-					.onChange((value) => this.note.props.study = value)
+					.setValue(this.note.card ? true : false)
+					.onChange((study) => {
+						if (study) {
+							this.note.card = this.initial.card ? this.initial.card : createEmptyCard();
+							showCardSettings(this.note.card!);
+						} else {
+							this.note.card = null;
+							hideCardSettings();
+						}
+					})
 			);
 
 		// card params
-		const card = this.note.props.card!;
-		if (this.note.props.card != null) {
-			new Setting(this.contentEl)
-				.setName('Card due date (can edit)')
+		const settings = [
+			new Setting(this.contentEl).setName('Card due date (can edit)'),
+			new Setting(this.contentEl).setName('Card stability'),
+			new Setting(this.contentEl).setName('Card difficulty'),
+			new Setting(this.contentEl).setName('Card elapsed days / scheduled days'),
+			new Setting(this.contentEl).setName('Card reps/lapses'),
+			new Setting(this.contentEl).setName('Card state'),
+			new Setting(this.contentEl).setName('Card last review')
+		];
+
+		const showCardSettings = (card: Card) => {
+			settings[0]
 				.addText((text) =>
 					text.setValue(card.due.toString()).onChange((value) => {
 						let newDate = new Date(value);
 						if (newDate.valueOf()) card.due = newDate;
 					}));
-			new Setting(this.contentEl)
-				.setName('Card stability')
+			settings[1]
 				.addText((text) =>
 					text.setPlaceholder(card.stability.toString()).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card difficulty')
+			settings[2]
 				.addText((text) =>
 					text.setPlaceholder(card.difficulty.toString()).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card elapsed days / scheduled days')
+			settings[3]
 				.addText((text) =>
 					text.setPlaceholder(card.elapsed_days.toString() + " / " + card.scheduled_days.toString()).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card reps/lapses')
+			settings[4]
 				.addText((text) =>
 					text.setPlaceholder(card.reps.toString() + " / " + card.lapses.toString()).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card state')
+			settings[5]
 				.addText((text) =>
 					text.setPlaceholder(State[card.state]).setDisabled(true));
-			new Setting(this.contentEl)
-				.setName('Card last review')
+			settings[6]
 				.addText((text) =>
-					text.setPlaceholder(card.last_review ? card.last_review.toString() : "not reviewed yet").setDisabled(true));
+					text.setPlaceholder(card.last_review ? card.last_review.toString() : "Not studied yet"));
 		}
+		const hideCardSettings = () => {
+			settings.forEach((setting) => setting.clear());
+		}
+		if (this.note.card) showCardSettings(this.note.card);
 		
-		const indices = (noteMatch as any).indices;
+		const indices = (listItemMatch as any).indices;
 		new Setting(this.contentEl)
-			.addButton((btn) => {
-				btn
-					.setButtonText('Remove card')
-					.setCta()
-					.onClick(() => {
-						this.close();
-						this.deleteCard(indices);
-					})
-			})
 			.addButton((btn) => {
 				btn
 					.setButtonText('Dismiss changes')
@@ -463,7 +467,6 @@ export class NotePropertyEditorModal extends Modal {
 							new Notice("Invalid card");
 							return;
 						}
-						this.note.props.card = card;
 						this.close();
 						this.updateData(indices);
 					})
@@ -472,90 +475,57 @@ export class NotePropertyEditorModal extends Modal {
 	}
 
 	updateData(indices: number[][]) {
-		let content = this.note.content;
-		if (this.note.id !== undefined) {
-			content += " #" + this.note.id;
-		}
 		const contentEdit = this.view.state.update({
 			changes: {
 				from: indices[3][0], 
 				to: indices[3][1], 
-				insert: content + " ", 
+				insert: createNoteString(this.note), 
 			}
 		});
-
-		const propsEdit = this.view.state.update({
-			changes: {
-				from: indices[4][0], 
-				to: indices[4][1], 
-				insert: createNoteTag(this.note.props, false), 
-			}
-		});
-		this.view.dispatch(contentEdit, propsEdit);
-	}
-
-	deleteCard(indices: number[][]) {
-		const edit = this.view.state.update({
-			changes: {
-				from: indices[4][0] - noteTagOpen.length,
-				to: indices[4][1] + noteTagClose.length,
-			}
-		});
-		this.view.dispatch(edit);
-	}
-
-	setID(id: string) {
-		// console.log(this.note.props.id);
-		console.log(id);
-		// this.note.props.id = id;
+		this.view.dispatch(contentEdit);
 	}
 }
 
-interface ID {
-	id: string;
-	content: string;
-	path: string[];
-};
-class IdSuggestModal extends SuggestModal<ID> {
+class IdSuggestModal extends SuggestModal<ListItem> {
 	callback: (id: string) => void;
-	notes: ID[];
+	items: ListItem[];
+	// this.paths: number[][];
 	defaultQuery: string;
 
 	constructor(app: App, view: EditorView, defaultQuery: string, callback: (id: string) => void) {
 		super(app)
 		this.callback = callback;
-		this.notes = [];
+		this.items = [];
+		// this.paths = [];
 		this.defaultQuery = defaultQuery;
 		
-		const text = view.state.doc.toString();
-		let taggedNoteMatch;
-		// split match into 
-		const taggedNoteRegex = RegExp(`([0-9]+\. |- )(.*?)(#\\w+)\\s*${noteTagOpen}(.*?)${noteTagClose}`, 'g');
-		while ((taggedNoteMatch = taggedNoteRegex.exec(text)) !== null) {
-			let content = taggedNoteMatch[2].trim();
-			let id = taggedNoteMatch[3].slice(1);
-			let path = parsePath(taggedNoteMatch[4].split(';')[0]);
-			this.notes.push({ content, id, path });
+		const tagRegex = RegExp("(\\t*)(\\d+. |- ).*(#\\w+)", 'd');
+		let lineNumber = 1;
+		for (let line of view.state.doc.iterLines()) {
+			const tagMatch = tagRegex.exec(line);
+			if (tagMatch) {
+				this.items.push(parseListItem(tagMatch[2] + tagMatch[3]));
+			}
+			lineNumber++;
 		}
-		// console.log(this.notes);
 	}
 
-	getSuggestions(query: string): ID[] {
+	getSuggestions(query: string): ListItem[] {
 		let q = query ? query : this.defaultQuery;
 		q = q.toLowerCase();
-		return this.notes.filter((note) => 
-			note.content.toLowerCase().includes(q) ||
-			note.id.includes(q)
+		return this.items.filter((item) => 
+			item.content.toLowerCase().includes(q) ||
+			item.id && item.id.toLowerCase().includes(q)
 		);
 	}
 
-	renderSuggestion(note: ID, el: HTMLElement): void {
-		el.createEl('div', { text: note.content + " #" + note.id });
-		el.createEl('small', { text: formatPath(note.path) });
+	renderSuggestion(item: ListItem, el: HTMLElement): void {
+		el.createEl('div', { text: item.content + " #" + item.id });
+		el.createEl('small', { text: "show path here" });
 	}
 
-	onChooseSuggestion(note: ID, evt: MouseEvent | KeyboardEvent): void {
-		this.callback(note.id);
+	onChooseSuggestion(item: ListItem, evt: MouseEvent | KeyboardEvent): void { 
+		this.callback(item.id ? item.id : "");
 		this.close();
 	}
 }
