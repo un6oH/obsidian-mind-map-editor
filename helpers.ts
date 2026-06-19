@@ -365,7 +365,7 @@ interface TextFragment {
 	image: boolean;
 	fragments: TextFragment[], 
 }
-export function formatContent(document: Document, text: string, type: string, viewImageCallback: (url: string) => void): { content: Element, hidden: Element } {
+export function formatContent(document: Document, text: string, viewImageCallback: (url: string) => void): { content: Element, hidden: Element } {
 	const fragments: TextFragment[] = [];
 	const imageRegex = new RegExp(imagePattern, 'g');
 	const infoRegex = new RegExp(infoPattern);
@@ -376,7 +376,12 @@ export function formatContent(document: Document, text: string, type: string, vi
 			text, 
 			hidden: false, 
 			image: false, 
-			fragments: []
+			fragments: [{
+				text, 
+				hidden: false, 
+				image: false,
+				fragments: [], 
+			}]
 		});
 		// console.log("formatContent()", text, "is an info node", infoMatch);
 	} else {
@@ -454,6 +459,7 @@ export function formatContent(document: Document, text: string, type: string, vi
 			let text = subFragment.text;
 			const imageRegex = RegExp(imagePattern, 'g');
 			while ((imageMatch = imageRegex.exec(text)) !== null) {
+				fragment.hidden = false; // if an image is found, the 
 				if (imageMatch.index > prevLastIndex) { // add text before the match to the fragment list
 					subFragment.fragments.push({
 						text: text.slice(prevLastIndex, imageMatch.index), 

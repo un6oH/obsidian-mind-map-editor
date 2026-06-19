@@ -11,7 +11,7 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseCard, parseMapTag } from 'helpers';
+import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseCard, parseMapTag, formatContent } from 'helpers';
 import { ListItem, MapSettings, Note, Warning } from 'types';
 import { Card, State } from 'ts-fsrs';
 import { createCards } from 'main';
@@ -160,6 +160,17 @@ class NoteDataWidget extends WidgetType {
     //   block.appendChild(tag);
     //   block.appendText(")");
     // }
+    // const label = document.createElement('span');
+    // label.addClass('label-content');
+    block.appendChild(formatContent(document, this.note.content, () => {}).content);
+    if (this.note.id !== undefined) {
+      const tag = document.createElement('span');
+      tag.addClass('cm-hashtag');
+      tag.textContent = "#" + this.note.id;
+      block.appendText(this.note.content ? " (" : "(");
+      block.appendChild(tag);
+      block.appendText(")");
+    }
 
     block.onclick = () => {
       new NotePropertyEditorModal(this.app, view, this.match).open();
@@ -291,8 +302,10 @@ export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback
             });
 
             const cardTagMatch = cardTagRegex.exec(listItemMatch[0]);
-            const start = cardTagMatch ? cardTagMatch.index + indices[0][0] : indices[0][1];
-            const end = cardTagMatch ? cardTagMatch.index + cardTagMatch[0].length + indices[0][0] : indices[0][1];
+            // const start = cardTagMatch ? cardTagMatch.index + indices[0][0] : indices[0][1];
+            // const end = cardTagMatch ? cardTagMatch.index + cardTagMatch[0].length + indices[0][0] : indices[0][1];
+            const start = indices[3][0];
+            const end = indices[3][1];
             decorations.push({ start, end, deco });
           }
           

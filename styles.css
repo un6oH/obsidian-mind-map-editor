@@ -35,7 +35,7 @@ If your plugin does not need CSS, delete this file.
   width: calc(1cap + 2px);
   height: calc(1cap + 2px);
   vertical-align: -0.0em;
-  /* margin: 0 0.25em; */
+  margin-right: 0.25em;
 }
 
 .widget-note {
@@ -43,7 +43,7 @@ If your plugin does not need CSS, delete this file.
   background-color: rgba(255, 255, 255, 0.103);
   padding: 0 0.25em 0 0.25em;
   cursor: var(--cursor-link);
-  margin-left: 0.5em;
+  /* margin-left: 0.5em; */
 }
 
 .widget-note:hover {
@@ -149,35 +149,36 @@ If your plugin does not need CSS, delete this file.
   transform: translate(-50%, -50%);
   text-align: center;
   text-wrap: wrap;
-  line-height: 90%;
+  line-height: 100%;
 }
 
-.mind-map-label .label-content {
+.label-content {
 
 }
 
-.mind-map-label .label-content .fragment-revealed {
-  /* color: lightblue; */
+.label-content .fragment-revealed {
+  color: lightblue;
   font-style: italic;
   /* text-decoration: underline; */
 }
 
-.mind-map-label .label-content .fragment-normal {
+.label-content .fragment-normal {
   color: white;
 }
 
-.mind-map-label .label-content .fragment-image {
+.label-content .fragment-image {
   color: var(--link-color);
 }
 
-.mind-map-label .label-hidden {
-  text-shadow: 0px 0px 10px white;
+.label-hidden {
+  
 }
 
-.mind-map-label .label-hidden .fragment-hidden {
+.label-hidden .fragment-hidden {
   white-space: pre;
   color: lightblue;
   font-weight: bold;
+  text-shadow: 0px 0px 10px white;
   /* outline: 2px solid white;
   outline-offset: -2px; */
 }
