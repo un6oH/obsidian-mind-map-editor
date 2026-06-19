@@ -1,5 +1,5 @@
 import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
-import { MapProperties, Note, MindMap, MindMapLayout, createMindMap, NoteGroup } from 'types';
+import { Note, MindMap, MindMapLayout, NoteGroup } from 'types';
 import { toPathString, colour, cardStateColours, formatContent } from 'helpers';
 import * as d3 from 'd3';
 import { Card, fsrs, FSRS, generatorParameters, Grade, Grades, IPreview, Rating, RecordLog, show_diff_message, State } from 'ts-fsrs';
@@ -336,7 +336,7 @@ export class MindMapView extends ItemView {
     this.layout = layout;
     this.saveProgressCallback = saveProgressCallback;
     this.saveLayoutCallback = saveLayoutCallback;
-    this.fsrs = fsrs(this.mindMap.map.settings.studySettings);
+    this.fsrs = fsrs(this.mindMap.map.studySettings);
     
     const presetLayout = layout.ids.length != 0;
 
@@ -346,13 +346,13 @@ export class MindMapView extends ItemView {
 
     // add central node (title)
     let centreNode = {} as Node;
-    if (!mindMap.map.settings.separateHeadings) {
+    if (!mindMap.map.separateHeadings) {
       let content = document.createElement('span');
       content.textContent = this.mindMap.map.title;
       // console.log("centre node content:", content);
       content.addClass('mind-map-label-title');
       centreNode = {
-        id: this.mindMap.map.id, 
+        id: this.mindMap.map.title, 
         index: 0, 
         content, 
         hidden: content, 
@@ -379,7 +379,7 @@ export class MindMapView extends ItemView {
     let nodeIndex = 0;
     for (let note of this.mindMap.notes) {
       // if the note has a specified id
-      if (note.id && this.mindMap.map.settings.crosslink) {
+      if (note.id && this.mindMap.map.crosslink) {
         const groupIndex = groups.findIndex((group) => group.id === note.id);
         if (groupIndex == -1) { // no matching id
           groups.push({
@@ -392,29 +392,30 @@ export class MindMapView extends ItemView {
         } else {
           groups[groupIndex].indices.push(nodeIndex);
           // make this note the reference if it has children or is before a note
-          const level = note.props.path.length;
+          const level = mindMap.tree[nodeIndex].length - 1;
           const nextIndex = nodeIndex + 1;
           if (nextIndex < this.mindMap.notes.length) {
-            const next = this.mindMap.notes[nextIndex];
-            if (
-              level < next.props.path.length ||
-              (level == next.props.path.length && note.listIndex == next.listIndex - 1)
-            ) groups[groupIndex].ref = nodeIndex;
+            const levelOfNext = mindMap.tree[nextIndex].length - 1;
+            if (level < levelOfNext) groups[groupIndex].ref = nodeIndex;
           }
         }
       }
-      nodeIndex++;
 
       // find chains
       const listIndex = note.listIndex;
-      if (listIndex == 0) continue;
+      if (listIndex == 0) {
+        nodeIndex++;
+        continue;
+      }
 
-      let id = toPathString(note.props.path);
-      let parent = toPathString(note.props.path.slice(0, -1));
-      if (note.props.path.length == 1) { // primary node that can be studied
-        if (this.mindMap.map.settings.separateHeadings && note.props.study) { // must have centre node
-          new Notice("Error: Key words must have a parent node.");
-          console.log("loadMindMap() Error: key word does not have a parent node");
+      // let id = toPathString(note.props.path);
+      let path = mindMap.tree[nodeIndex];
+      let id = path.join('-');
+      let parent = path.slice(0, -1).join('-');
+      if (path.length == 1) { // primary node that can be studied
+        if (mindMap.map.separateHeadings && note.card) { // must have centre node
+          new Notice("Error: Studyable notes must have a parent node.");
+          console.log("loadMindMap() Error: key word does not have a parent node content:", note.content, "path:", path);
           return;
         } else {
           parent = centreNode.id;
@@ -433,6 +434,8 @@ export class MindMapView extends ItemView {
         });
         chains[i - 1].nodes[listIndex - 1] = id;
       }
+
+      nodeIndex++;
     }
 
     // verify chains
@@ -453,18 +456,18 @@ export class MindMapView extends ItemView {
     for (let note of this.mindMap.notes) {
       // console.log("loadMindMap() note", note);
       let nodeId: string;
-      const path = note.props.path;
+      const path = mindMap.tree[nodeIndex];
       
       // check crosslinks
       let newNode = true;
-      if (note.id && this.mindMap.map.settings.crosslink) {
+      if (note.id && this.mindMap.map.crosslink) {
         const groupIndex = groups.findIndex((group) => group.id === note.id);
         const refIndex = groups[groupIndex].ref;
-        const ref = this.mindMap.notes[refIndex];
-        nodeId = toPathString(ref.props.path);
+        // const ref = this.mindMap.notes[refIndex];
+        nodeId = mindMap.tree[refIndex].join('-');
         newNode = refIndex == nodeIndex; // only make one new node per group
       } else {
-        nodeId = toPathString(path);
+        nodeId = path.join('-');
         // check for duplicates
         if (!this.nodes.every((node) => node.id !== nodeId)) newNode = false;
       }
@@ -473,7 +476,7 @@ export class MindMapView extends ItemView {
       const level = path.length - 1;
       const study = note.card;
       const listIndex = note.listIndex;
-      let source = path.length == 1 ? centreNode!.id : toPathString(note.props.path.slice(0, -1));
+      let source = path.length == 1 ? centreNode!.id : path.slice(0, -1).join('-');
       const origin = source;
       if (listIndex > 1) { // node in a chain
         let chainIndex = chains.findIndex((group) => group.origin === source);
@@ -493,7 +496,7 @@ export class MindMapView extends ItemView {
           level, 
           originIndex: -1, 
           listIndex, 
-          study, 
+          study: note.card ? true : false, 
           centre: false, 
           links: [], 
           hasStudyableChildren: false, 
@@ -511,7 +514,7 @@ export class MindMapView extends ItemView {
       }
 
       // separate headings
-      if (mindMap.map.settings.separateHeadings && note.props.path.length == 1) continue;
+      if (mindMap.map.separateHeadings && path.length == 1) continue;
 
       this.links.push({
         index: linkIndex, 
@@ -521,8 +524,8 @@ export class MindMapView extends ItemView {
         target: nodeId, 
         targetIndex: 0, 
         level: listIndex > 1 ? level : level - 1, 
-        card: note.props.card, 
-        reviewed: study ? note.props.card!.due > now : true, 
+        card: note.card, 
+        reviewed: study ? note.card!.due > now : true, 
       });
       linkIndex++;
     }
@@ -573,8 +576,10 @@ export class MindMapView extends ItemView {
       // .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id))
       .force('link', d3.forceLink<Node, Link>(this.links).id(d => d.id).strength(0.2))
       .force('collide', d3.forceCollide().radius(d => (d as Node).collideRadius * this.minFontSize * 0.75).strength(0.05))
-      .force('center', d3.forceCenter().strength(this.mindMap.map.settings.separateHeadings ? 1 : 0))
-      .force('charge', d3.forceManyBody().strength(-30).distanceMin(120))
+      .force('center', d3.forceCenter().strength(this.mindMap.map.separateHeadings ? 1 : 0))
+      .force('x', d3.forceX().strength(0.005))
+      .force('y', d3.forceY().strength(0.005))
+      .force('charge', d3.forceManyBody().strength(this.mindMap.map.separateHeadings ? -10 : -30).distanceMin(120))
       .alpha(presetLayout ? 0 : INITIAL_ALPHA)
       .alphaDecay(INITIAL_ALPHADECAY)
       .alphaMin(MIN_ALPHA)
@@ -601,7 +606,7 @@ export class MindMapView extends ItemView {
         .attr('stroke', d => linkStroke(this.viewMode, d))
         // .attr('stroke-dasharray', d => d.card ? STROKE_DASHARRAYS[d.card.state] : "")
         .attr('stroke-dasharray', d => linkStrokeDasharray(this.viewMode, d))
-        .attr('stroke-width', 1);
+        .attr('stroke-width', 3);
 
     this.node = this.svg.append('g')
       .selectAll<SVGCircleElement, Node>('circle')
@@ -1212,7 +1217,7 @@ function linkStroke(mode: ViewMode, link: Link): string {
 function linkStrokeDasharray(mode: ViewMode, link: Link): string {
   if (mode == ViewMode.Study) {
     if (link.card) {
-      if (!link.reviewed) return "4 2"
+      if (!link.reviewed) return "8 4"
     }
   }
   return "";

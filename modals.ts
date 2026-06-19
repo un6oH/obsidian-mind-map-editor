@@ -1,92 +1,89 @@
 import { EditorView } from '@codemirror/view';
 import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State } from 'ts-fsrs';
-import { ListItem, MapProperties, MapSettings, MindMap, Note, Warning } from 'types';
+import { ListItem, MapSettings, MindMap, Note, Warning } from 'types';
 import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createMapTag, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, createNoteString, listItemRegex } from 'helpers';
-import MindMapEditorPlugin, { dismissWarnings, studyMindMap, updateMapSettings, updateNotes } from 'main';
+import MindMapEditorPlugin, { dismissWarnings, openMindMapView, updateMapSettings, createCards } from 'main';
 
 export class MindMapCreatorModal extends Modal {
 	constructor(app: App, title: string, editorCallback: (text: string) => void) {
 		super(app);
 
 		this.setTitle("Create a mind map");
-		const map: MapProperties = {
+		const map: MapSettings = {
 			title: title ? title : "My mind map",
-			id: 'id', 
-			settings: {
-				separateHeadings: false, 
-				crosslink: true, 
-				studySettings: generatorParameters(),
-			}
+			separateHeadings: false, 
+			crosslink: true, 
+			studySettings: generatorParameters(),
 		}
+
 		new Setting(this.contentEl)
 			.setName("Title")
 			.addText((text) => text
 				.setPlaceholder(map.title)
 				.onChange((value) => {
 					map.title = value;
-					map.id = toNoteID(value, false);
 				}));
 
 		new Setting(this.contentEl)
 			.setName("Separate headings")
 			.setDesc("Turn on to remove the centre node to create separate mind maps")
 			.addToggle((toggle) => toggle
-				.setValue(map.settings.separateHeadings)
-				.onChange((value) => map.settings.separateHeadings = value)
+				.setValue(map.separateHeadings)
+				.onChange((value) => map.separateHeadings = value)
 			);	
 
 		new Setting(this.contentEl)
 			.setName("Crosslink")
 			.setDesc("Identical key words link together")
 			.addToggle((toggle) => toggle
-				.setValue(map.settings.crosslink)
-				.onChange((value) => map.settings.crosslink = value)
+				.setValue(map.crosslink)
+				.onChange((value) => map.crosslink = value)
 			);
 
 		new Setting(this.contentEl)
 			.setName("Desired retention")
 			.addText((text) => text
-				.setPlaceholder(map.settings.studySettings.request_retention.toString())
+				.setPlaceholder(map.studySettings.request_retention.toString())
 				.onChange((value) => {
 					let v = parseFloat(value);
-					if (v) map.settings.studySettings.request_retention = v;
+					if (v) map.studySettings.request_retention = v;
 				}));
 		
 		new Setting(this.contentEl)
 			.setName("Maximum interval")
 			.addText((text) => text
-				.setPlaceholder(map.settings.studySettings.maximum_interval.toString())
+				.setPlaceholder(map.studySettings.maximum_interval.toString())
 				.onChange((value) => {
 					let v = parseFloat(value);
-					if (v) map.settings.studySettings.maximum_interval = v;
+					if (v) map.studySettings.maximum_interval = v;
 				}));
 
 		new Setting(this.contentEl)
 			.setName("Parameters")
 			.addText((text) => text
-				.setPlaceholder(map.settings.studySettings.w.toString())
+				.setPlaceholder(map.studySettings.w.toString())
 				.onChange((value) => {
 					let v = parseNumberArray(value);
-					if (v) map.settings.studySettings.w = v;
+					if (v) map.studySettings.w = v;
 				}));
 
 		new Setting(this.contentEl)
 			.setName("Enable fuzz")
 			.addText((text) => text
-				.setPlaceholder(map.settings.studySettings.enable_fuzz.toString())
+				.setPlaceholder(map.studySettings.enable_fuzz.toString())
 				.onChange((value) => {
 					let v = value === "true";
-					if (v) map.settings.studySettings.enable_fuzz = v;
+					if (v) map.studySettings.enable_fuzz = v;
 				}));
 		
 		new Setting(this.contentEl)
 			.setName("Enable short term")
 			.addText((text) => text
-				.setPlaceholder(map.settings.studySettings.enable_short_term.toString())
+				.setPlaceholder(map.studySettings.enable_short_term.toString())
 				.onChange((value) => {
 					let v = value === "true";
-					if (v) map.settings.studySettings.enable_short_term = v;
+					if (v) map.studySettings.enable_short_term = v;
 				}));
 
 		new Setting(this.contentEl)
@@ -95,7 +92,7 @@ export class MindMapCreatorModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					this.close();
-					editorCallback("# " + map.title + "\n" + createMapTag(map.settings, true));
+					editorCallback(createMapTag(map, true));
 				})
 			)
 	}
@@ -121,7 +118,7 @@ export class UpdateNotesModal extends Modal {
 				.setButtonText("Update notes")
 				.setCta()
 				.onClick(() => {
-					updateNotes(editor, settings.crosslink);
+					createCards(editor);
 					this.close();
 				}));
 	}
@@ -176,17 +173,18 @@ export class StudyMindMapModal extends Modal {
 			.setName("Separate headings")
 			.setDesc("Turn on to remove the centre node to create separate mind maps")
 			.addToggle((toggle) => toggle
-				.setValue(false)
+				.setValue(mindMap.map.separateHeadings)
 				// .setValue(mindMap.map.settings.separateHeadings)
-				.onChange((value) => mindMap.map.settings.separateHeadings = value)
-				.setDisabled
+				.onChange((value) => mindMap.map.separateHeadings = value)
+				.setDisabled(true)
 			);
+			
 		new Setting(this.contentEl)
 			.setName("Crosslink")
 			.setDesc("Identical key words link together")
 			.addToggle((toggle) => toggle
-				.setValue(mindMap.map.settings.crosslink)
-				.onChange((value) => mindMap.map.settings.crosslink = value)
+				.setValue(mindMap.map.crosslink)
+				.onChange((value) => mindMap.map.crosslink = value)
 			);
 		
 		new Setting(this.contentEl)
@@ -200,7 +198,7 @@ export class StudyMindMapModal extends Modal {
 				.setButtonText("Let's go!")
 				.setCta()
 				.onClick(() => {
-					studyMindMap(plugin, editor, mindMap);
+					openMindMapView(plugin, editor, mindMap);
 					this.close();
 				}));
 	}
@@ -210,60 +208,72 @@ export class MapSettingsEditorModal extends Modal {
 	editor: Editor = {} as Editor;
 
 	// start and end of tag
-	constructor(app: App, view: EditorView, from: number, to: number) {
+	constructor(app: App, view: EditorView, match: RegExpExecArray) {
 		// console.log("Created map study settings editor modal", "start:", start, "end:", end);
 		super(app);
 		
 		// parse data string
 		this.setTitle("Map settings");
-		const tag = view.state.doc.sliceString(from, to);
-		const settings = parseMapTag(tag);
+		const map = parseMapTag(match[1]);
+
+		new Setting(this.contentEl)
+			.setName("Title")
+			.addText(text => 
+				text
+					.setPlaceholder(map.title)
+					.setValue(map.title)
+					.onChange((value) => {
+						map.title = value;
+					})
+			);
 
 		new Setting(this.contentEl)
 			.setName("Separate headings")
 			.setDesc("Turn on to remove the centre node to create separate mind maps")
 			.addToggle((toggle) => toggle
-				.setValue(settings.separateHeadings)
-				.onChange((value) => settings.separateHeadings = value)
+				.setValue(map.separateHeadings)
+				.onChange((value) => map.separateHeadings = value)
 			);
 		new Setting(this.contentEl)
 			.setName("Crosslink")
 			.setDesc("Identical key words link together")
 			.addToggle((toggle) => toggle
-				.setValue(settings.crosslink)
-				.onChange((value) => settings.crosslink = value)
+				.setValue(map.crosslink)
+				.onChange((value) => map.crosslink = value)
 			);
 		new Setting(this.contentEl)
       .setName('Enable fuzz')
       .addToggle((toggle) => toggle
-				.setValue(settings.studySettings.enable_fuzz)
-				.onChange((value) => settings.studySettings.enable_fuzz = value)
+				.setValue(map.studySettings.enable_fuzz)
+				.onChange((value) => map.studySettings.enable_fuzz = value)
 			);
 		new Setting(this.contentEl)
 			.setName('Enable short term')
 			.addToggle((toggle) => toggle
-				.setValue(settings.studySettings.enable_short_term)
-				.onChange((value) => settings.studySettings.enable_short_term = value)
+				.setValue(map.studySettings.enable_short_term)
+				.onChange((value) => map.studySettings.enable_short_term = value)
 			);
 		new Setting(this.contentEl)
 			.setName('maximum interval')
 			.addText((text) =>
-				text.setPlaceholder(settings.studySettings.maximum_interval.toString()).onChange((value) => {
-					settings.studySettings.maximum_interval = parseFloat(value);
+				text.setPlaceholder(map.studySettings.maximum_interval.toString()).onChange((value) => {
+					map.studySettings.maximum_interval = parseFloat(value);
 				}));
 		new Setting(this.contentEl)
 			.setName('Request retention')
 			.addText((text) =>
-				text.setPlaceholder(settings.studySettings.request_retention.toString()).onChange((value) => {
-					settings.studySettings.request_retention = parseFloat(value);
+				text.setPlaceholder(map.studySettings.request_retention.toString()).onChange((value) => {
+					map.studySettings.request_retention = parseFloat(value);
 				}));
+
+		const indices = (match as any).indices;
 		new Setting(this.contentEl)
 			.addButton((btn) => {
 				btn
 					.setButtonText('OK')
 					.setCta()
 					.onClick(() => {
-						this.updateSettings(view, settings, from, to);
+						this.updateSettings(view, map, indices[1][0], indices[1][1]);
 						this.close();
 					})
 			});
@@ -271,7 +281,7 @@ export class MapSettingsEditorModal extends Modal {
 
 	updateSettings(view: EditorView, settings: MapSettings, from: number, to: number) {
 		const edit = view.state.update({
-			changes: { from, to, insert: createMapTag(settings, true) }
+			changes: { from, to, insert: createMapTag(settings, false) }
 		});
 		view.dispatch(edit);
 	}

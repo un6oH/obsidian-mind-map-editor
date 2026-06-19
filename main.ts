@@ -2,9 +2,10 @@ import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidi
 import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
-import { Settings, MindMapLayout, Warning, MapProperties, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
-import { mapTagRegex, parseMindMap, createCardTag, toNoteID, toPathString, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy } from 'helpers';
+import { Settings, MindMapLayout, Warning, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
+import { mapTagRegex, createCardTag, toNoteID, toPathString, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
+import { map, MapState, updateEffect } from 'state-fields/map-state-field';
 // Remember to rename these classes and interfaces!
 
 const DEFAULT_SETTINGS = {
@@ -27,8 +28,10 @@ export default class MindMapEditorPlugin extends Plugin {
 				// console.log("No saved layouts");
 			}
 		});
-
-		this.registerEditorExtension([createMindMapEditorViewPlugin(this)]);
+		
+		// 	const editor = activeView!.editor;35
+		this.registerEditorExtension([createMindMapEditorViewPlugin(this, () => this.checkNotes(), () => this.createCards(), () => this.openStudyMindMapModal())]);
+		this.registerEditorExtension([map]);
 
 		this.registerView(
 			VIEW_TYPE_MIND_MAP, 
@@ -43,67 +46,54 @@ export default class MindMapEditorPlugin extends Plugin {
 			const library = processDocument(activeView!.editor);
 			proofreadNotes(activeView!.editor, library);
 			// new ProofreadNotesModal(this.app, activeView!.editor, library.warningLines, library.warnings).open();
-		}; 
-
-		const updateNotesStatusBarItem = this.addStatusBarItem();
-		updateNotesStatusBarItem.addClass('mod-clickable');
-		updateNotesStatusBarItem.textContent = "Update notes";
-		updateNotesStatusBarItem.onclick = () => {
-			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-			this.currentMindMapTitle = isMindMap(activeView!.editor);
-			new UpdateNotesModal(this.app, activeView!.editor).open();
 		};
+
+		// const updateNotesStatusBarItem = this.addStatusBarItem();
+		// updateNotesStatusBarItem.addClass('mod-clickable');
+		// updateNotesStatusBarItem.textContent = "Add cards";
+		// updateNotesStatusBarItem.onclick = () => {
+		// 	const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		// 	this.currentMindMapTitle = isMindMap(activeView!.editor);
+		// 	new UpdateNotesModal(this.app, activeView!.editor).open();
+		// };
 		
-		const studyMindMapStatusBarItem = this.addStatusBarItem();
-		studyMindMapStatusBarItem.addClass('mod-clickable');
-		studyMindMapStatusBarItem.textContent = `Study mind map`;
-		studyMindMapStatusBarItem.onclick = () => {
-			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-			const editor = activeView!.editor;35
-			const text = activeView!.editor.getRange(
-				{ line: 0, ch: 0 }, 
-				{ line: editor.lineCount(), ch: 0 }
-			);
-			const library = processDocument(editor.getDoc());
-			if (library.warningLines.length != 0) {
-				new Notice("Unresolved warnings - fix notes");
-				proofreadNotes(editor, library);
-				return;
-			}
-			const mindMap = parseMindMap(text);
-			if (!mindMap) {
-				new Notice("Mind map not found.");
-				return;
-			}
+		// const studyMindMapStatusBarItem = this.addStatusBarItem();
+		// studyMindMapStatusBarItem.addClass('mod-clickable');
+		// studyMindMapStatusBarItem.textContent = `Study mind map`;
+		// studyMindMapStatusBarItem.onclick = () => {
+		// 	const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		// 	const editor = activeView!.editor;
+		// 	const text = activeView!.editor.getRange(
+		// 		{ line: 0, ch: 0 }, 
+		// 		{ line: editor.lineCount(), ch: 0 }
+		// 	);
+		// 	const library = processDocument(editor.getDoc());
+		// 	if (library.warningLines.length != 0) {
+		// 		new Notice("Unresolved warnings - fix notes");
+		// 		proofreadNotes(editor, library);
+		// 		return;
+		// 	}
+		// 	const mindMap = parseMindMap(text);
+		// 	if (!mindMap) {
+		// 		new Notice("Mind map not found.");
+		// 		return;
+		// 	}
 
-			new StudyMindMapModal(this, editor, mindMap).open();
-		}
+		// 	new StudyMindMapModal(this, editor, mindMap).open();
+		// }
 
-		const cursorIndexStatusBarItem = this.addStatusBarItem();
-		cursorIndexStatusBarItem.addClass('mod-clickable');
-		cursorIndexStatusBarItem.textContent = "Cursor at:";
-		
-		// trigger status bar items to show 
-		this.registerEvent(this.app.workspace.on('active-leaf-change', () => {
-			const leaf = this.app.workspace.getActiveViewOfType(MarkdownView);
-			this.currentMindMapTitle = leaf ? isMindMap(leaf.editor) : "";
-			if (leaf && this.currentMindMapTitle !== "") {
-				proofreadNotesStatusBarItem.show();
-				updateNotesStatusBarItem.show();
-				studyMindMapStatusBarItem.show();
-				studyMindMapStatusBarItem.textContent = `Study ${this.currentMindMapTitle}`;
-			} else {
-				proofreadNotesStatusBarItem.hide();
-				updateNotesStatusBarItem.hide();
-				studyMindMapStatusBarItem.hide();
-			}
-		}));
+		// const cursorIndexStatusBarItem = this.addStatusBarItem();
+		// cursorIndexStatusBarItem.addClass('mod-clickable');
+		// cursorIndexStatusBarItem.textContent = "Cursor at:";
 
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
-			const cursorPosition = editor?.getCursor('head');
-			cursorIndexStatusBarItem.textContent = `Cursor at: ${cursorPosition?.line}, ${cursorPosition?.ch}`;
-		});
+		// this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+		// 	const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+		// 	const cursorPosition = editor?.getCursor('head');
+		// 	cursorIndexStatusBarItem.textContent = `Cursor at: ${cursorPosition?.line}, ${cursorPosition?.ch}`;
+		// });
+
+		this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.updateMapState()));
+		this.updateMapState();
 
 		// Add a command to create a mindmap template
 		this.addCommand({
@@ -154,6 +144,106 @@ export default class MindMapEditorPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	getActiveView(): MarkdownView | null {
+		return this.app.workspace.getActiveViewOfType(MarkdownView);
+	}
+
+	getEditorView(view: MarkdownView) {
+		// @ts-expect-error, not typed
+		return view.editor.cm as EditorView; 
+	}
+
+	updateMapState() {
+		const view = this.getActiveView();
+		if (view) {
+			const editorView = this.getEditorView(view);
+			editorView.dispatch({
+				effects: [updateEffect.of(null)]
+			});
+		}
+	}
+
+	getMindMap(view: MarkdownView | null = null): MindMap | null {
+		if (!view) {
+			view = this.getActiveView();
+			if (!view) {
+				console.log("getMindMap(): Could not get MarkdownView");
+				return null;
+			}
+		}
+
+		// @ts-expect-error, not typed
+		const editorView = view.editor.cm as EditorView;
+		const mapState: MapState = editorView.state.field(map);
+		if (!mapState.valid) {
+			console.log("getMindMap(): No valid mind map");
+			return null;
+		} else {
+			return {
+				map: mapState.map!, 
+				notes: mapState.notes!, 
+				tree: mapState.tree!
+			}
+		}
+	}
+
+	checkNotes(view: MarkdownView | null = null): boolean {
+		if (!view) {
+			view = this.getActiveView();
+			if (!view || !view.editor) {
+				new Notice("No editor");
+				return false;
+			}
+		}
+
+		const library = processDocument(view.editor.getDoc());
+		if (library.warningLines.length != 0) {
+			new Notice("Unresolved warnings - fix notes");
+			proofreadNotes(view.editor, library);
+			return false;
+		} else {
+			new Notice("No errors");
+			return true;
+		}
+	}
+
+	createCards(view: MarkdownView | null = null) {
+		if (!view) {
+			view = this.getActiveView();
+			if (!view || !view.editor) {
+				new Notice("No editor");
+				return false;
+			}
+		}
+		
+		createCards(view.editor);
+	}
+
+	openStudyMindMapModal(view: MarkdownView | null = null) {
+		if (!view) {
+			view = this.getActiveView();
+			if (!view || !view.editor) {
+				new Notice("No editor");
+				return;
+			}
+		}
+
+		// check notes
+		if (!this.checkNotes(view)) {
+			console.log("openStudyMindMapModal(): Error on check notes");
+			return;
+		}
+
+		const mindMap = this.getMindMap(view);
+		if (!mindMap) {
+			console.log("openStudyMindMapModal(): Error on get mind map");
+			return;
+		}
+
+		console.log(mindMap);
+		new StudyMindMapModal(this, view.editor, mindMap).open();
+	}
 }
 
 export function updateMapSettings(editor: Editor, settings: MapSettings) {
@@ -165,7 +255,7 @@ export function updateMapSettings(editor: Editor, settings: MapSettings) {
 	)
 }
 
-export async function studyMindMap(plugin: MindMapEditorPlugin, editor: Editor, mindMap: MindMap) {
+export async function openMindMapView(plugin: MindMapEditorPlugin, editor: Editor, mindMap: MindMap) {
 	const filePath = plugin.app.workspace.activeEditor?.file?.path!;
 	// console.log(filePath);
 	let layoutIndex = plugin.settings.layouts.findIndex((layout) => layout.path === filePath);
@@ -193,6 +283,7 @@ export async function studyMindMap(plugin: MindMapEditorPlugin, editor: Editor, 
 	}
 
 	// "Reveal" the leaf in case it is in a collapsed sidebar
+	console.log(mindMap);
 	await workspace.revealLeaf(leaf);
 	const view = leaf.view as MindMapView;
 	await view.loadGraph(mindMap, layout, () => updateNote(editor), (layout: MindMapLayout) => saveLayout(plugin, layout));
@@ -405,7 +496,8 @@ export function dismissWarnings(editor: Editor) {
 	// console.log("dismissWarnings(): Dismissed all warnings");
 }
 
-export function updateNotes(editor: Editor, linkSimilar: boolean) {
+export function createCards(editor: Editor) {
+	new Notice("Creating cards... (this may take a few seconds)");
 	const doc = editor.getDoc();
 	const noteList = processDocument(doc);
 	if (noteList.warningLines.length != 0) {
@@ -478,11 +570,10 @@ export function updateNotes(editor: Editor, linkSimilar: boolean) {
 	}
 
 	console.log(`updateNotes(): updated ${noteList.listItems.length} notes`);
+	new Notice(`Updated ${noteList.listItems.length} notes`);
 }
 
 export function isMindMap(editor: Editor): string { // returns map title if map setup tags exist
-	const lineCount = editor.lineCount();
-
 	let title = "";
 	const titleMatch = /^# (.*)$/m.exec(editor.getLine(0));
 	if (titleMatch) {
@@ -504,13 +595,13 @@ export function isMindMap(editor: Editor): string { // returns map title if map 
 }
 
 export function addMindMapTag(editor: Editor) {
-	const tag = `${mapTagOpen}false;true;false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621${mapTagClose}`;
+	const tag = `${mapTagOpen}Untitled;false;true;false;true;36500;0.9;0.40255,1.18385,3.173,15.69105,7.1949,0.5345,1.4604,0.0046,1.54575,0.1192,1.01925,1.9395,0.11,0.29605,2.2698,0.2315,2.9898,0.51655,0.6621${mapTagClose}`;
 	const cursor = editor.getCursor();
 	const from = {
 		line: cursor.line, 
 		ch: editor.getLine(cursor.line).length
 	} 
-	editor.replaceRange("\n" + tag, from);
+	editor.replaceRange(tag, from);
 }
 
 async function updateNote(editor: Editor) {

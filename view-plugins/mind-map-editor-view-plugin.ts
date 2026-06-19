@@ -11,31 +11,94 @@ import {
 import { RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseCard } from 'helpers';
-import { ListItem, Note, Warning } from 'types';
+import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseCard, parseMapTag } from 'helpers';
+import { ListItem, MapSettings, Note, Warning } from 'types';
 import { Card, State } from 'ts-fsrs';
+import { createCards } from 'main';
 
-class MapStudyParametersWidget extends WidgetType {
+// class MapStudyParametersWidget extends WidgetType {
+//   app: App;
+//   start: number; // index of tag
+//   end: number;
+
+//   constructor(app: App, start: number, end: number) {
+//     super();
+//     this.app = app;
+//     this.start = start;
+//     this.end = end;
+//   }
+
+//   toDOM(view: EditorView) {
+//     const button = document.createElement('button');
+//     button.textContent = 'Inspect map settings';
+//     button.className = "widget-map";
+//     button.onclick = () => {
+//       // console.log("creating map settings editor modal");
+//       // new MapSettingsEditorModal(this.app, view, this.start, this.end).open();
+//     };
+//     return button;
+//   }
+
+//   ignoreEvent() {
+//     return false;
+//   }
+// }
+
+class ControlPanel extends WidgetType {
   app: App;
-  start: number; // index of tag
-  end: number;
+  map: MapSettings;
+  match: RegExpExecArray;
+  checkNotesCallback: () => void;
+  createCardsCallback: () => void;
+  studyCallback: () => void;
 
-  constructor(app: App, start: number, end: number) {
+  constructor(app: App, match: RegExpExecArray, checkNotesCallback: () => void, addCardsCallback: () => void, studyCallback: () => void) {
     super();
     this.app = app;
-    this.start = start;
-    this.end = end;
+    this.match = match;
+    this.map = parseMapTag(match[1]);
+    this.checkNotesCallback = checkNotesCallback;
+    this.createCardsCallback = addCardsCallback;
+    this.studyCallback = studyCallback;
   }
 
-  toDOM(view: EditorView) {
-    const button = document.createElement('button');
-    button.textContent = 'Inspect map settings';
-    button.className = "widget-map";
-    button.onclick = () => {
+  toDOM(view: EditorView,) {
+    const container = document.createElement('div');
+    container.addClass('widget-map');
+
+    const title = document.createElement('h1');
+    title.textContent = this.map.title;
+    container.appendChild(title);
+
+    const settingsButton = document.createElement('button');
+    settingsButton.textContent = 'Settings';
+    settingsButton.addClass("widget-map-button");
+    settingsButton.id = 'widget-map-settings-button';
+    settingsButton.onclick = () => {
       // console.log("creating map settings editor modal");
-      new MapSettingsEditorModal(this.app, view, this.start, this.end).open();
+      new MapSettingsEditorModal(this.app, view, this.match).open();
     };
-    return button;
+    container.appendChild(settingsButton);
+
+    const checkNotesButton = document.createElement('button');
+    checkNotesButton.textContent = 'Check Notes';
+    checkNotesButton.id = 'widget-map-check-notes-button';
+    checkNotesButton.onclick = this.checkNotesCallback;
+    container.appendChild(checkNotesButton);
+
+    const createCardsButton = document.createElement('button');
+    createCardsButton.textContent = 'Create Cards';
+    createCardsButton.id = 'widget-map-add-cards-button';
+    createCardsButton.onclick = this.createCardsCallback;
+    container.appendChild(createCardsButton);
+
+    const studyButton = document.createElement('button');
+    studyButton.textContent = 'Study Mind Map';
+    studyButton.id = 'widget-map-study-button';
+    studyButton.onclick = this.studyCallback;
+    container.appendChild(studyButton);
+
+    return container;
   }
 
   ignoreEvent() {
@@ -88,15 +151,15 @@ class NoteDataWidget extends WidgetType {
     block.addClass(this.note.card ? 'widget-note-study' : 'widget-note-nostudy');
 
     block.appendChild(icon);
-    block.appendText(this.note.content ? this.note.content : "");
-    if (this.note.id !== undefined) {
-      const tag = document.createElement('span');
-      tag.addClass('cm-hashtag');
-      tag.textContent = "#" + this.note.id;
-      block.appendText(this.note.content ? " (" : "(");
-      block.appendChild(tag);
-      block.appendText(")");
-    }
+    // block.appendText(this.note.content ? this.note.content : "");
+    // if (this.note.id !== undefined) {
+    //   const tag = document.createElement('span');
+    //   tag.addClass('cm-hashtag');
+    //   tag.textContent = "#" + this.note.id;
+    //   block.appendText(this.note.content ? " (" : "(");
+    //   block.appendChild(tag);
+    //   block.appendText(")");
+    // }
 
     block.onclick = () => {
       new NotePropertyEditorModal(this.app, view, this.match).open();
@@ -189,7 +252,7 @@ const mapTagOpenLength = mapTagOpen.length;
 const mapTagCloseLength = mapTagClose.length;
 // const noteTagOpenLength = noteTagOpen.length;
 // const noteTagCloseLength = noteTagClose.length;
-export function createMindMapEditorViewPlugin(plugin: Plugin) {
+export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback: () => void, addCardsCallback: () => void, studyCallback: () => void) {
   return ViewPlugin.fromClass(
     class MindMapEditorViewPlugin implements PluginValue {
       decorations: DecorationSet;
@@ -229,21 +292,20 @@ export function createMindMapEditorViewPlugin(plugin: Plugin) {
 
             const cardTagMatch = cardTagRegex.exec(listItemMatch[0]);
             const start = cardTagMatch ? cardTagMatch.index + indices[0][0] : indices[0][1];
-            const end = indices[0][1];
+            const end = cardTagMatch ? cardTagMatch.index + cardTagMatch[0].length + indices[0][0] : indices[0][1];
             decorations.push({ start, end, deco });
           }
           
           let mapMatch;
-          const mapTagRegex = RegExp(mapTagPattern, 'gm');
+          const mapTagRegex = RegExp(mapTagPattern, 'dgm');
           while ((mapMatch = mapTagRegex.exec(text)) !== null) {
-            // console.log(mapMatch);
-            const start = from + mapMatch.index; // index of full tag
-            const end = start + mapMatch[0].length;
+            const indices = (mapMatch as any).indices;
+            indices[0] = [indices[0][0] + from, indices[0][1] + from];
             const deco = Decoration.replace({
-              widget: new MapStudyParametersWidget(plugin.app, start, end),
+              widget: new ControlPanel(plugin.app, mapMatch, checkNotesCallback, addCardsCallback, studyCallback),
               inclusive: false
             });
-            decorations.push({start, end, deco});
+            decorations.push({ start: indices[0][0], end: indices[0][1], deco});
           }
 
           let errorMatch;

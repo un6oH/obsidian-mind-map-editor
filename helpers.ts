@@ -1,5 +1,5 @@
 import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } from "ts-fsrs";
-import { MapProperties, Note, MindMap, MapSettings, ListItem } from "types";
+import { Note, MindMap, MapSettings, ListItem } from "types";
 import { interpolateRainbow, style } from "d3";
 
 export const listItemPattern = "(\\t*)(\\d+. |- )(.*)";
@@ -28,7 +28,7 @@ export const idTagRegex = RegExp(idTagPattern, 'd');
 
 export const mapTagOpen = "%%map";
 export const mapTagClose = "%%";
-export const mapTagPattern = `${mapTagOpen}(.*?)${mapTagClose}`;
+export const mapTagPattern = `${mapTagOpen}(.*)${mapTagClose}`;
 export const mapTagRegex = RegExp(mapTagPattern, 'd');
 
 export const imagePattern = `\\!\\[\\[(.*?\\.png)(\\|\\d+)?\\]\\]`;
@@ -51,18 +51,6 @@ export const errorRegex = RegExp(errorPattern, 'md');
 export function parseMindMap(text: string): MindMap | null {
 	const mindMap = {} as MindMap;
 
-	// title
-	const titleRegex = new RegExp("# (.*?)$", 'm');
-	let titleMatch = titleRegex.exec(text);
-  // console.log(titleMatch);
-	if (!titleMatch) {
-		console.log("Mind map title not found");
-		return null;
-	} else {
-		mindMap.map.title = titleMatch[1];
-    mindMap.map.id = toNoteID(titleMatch[1], false);
-	}
-
 	// map settings
 	const mapTagRegex = new RegExp(mapTagPattern, 'gm');
 	let mapMatch = mapTagRegex.exec(text);
@@ -70,15 +58,14 @@ export function parseMindMap(text: string): MindMap | null {
 		console.log("Study parameters not found");
 		return null;
 	} else {
-		const settings = parseMapTag(mapMatch[0]);
-		mindMap.map.settings = settings;
+		mindMap.map = parseMapTag(mapMatch[1]);
 	}
 
 	// notes
-	const noteRegex = new RegExp(notePattern, 'gm');
-	let noteMatch;
-	while ((noteMatch = noteRegex.exec(text)) !== null) {
-		mindMap.notes.push(parseNote(noteMatch));
+	const listItemRegex = new RegExp(notePattern, 'gm');
+	let itemMatch;
+	while ((itemMatch = listItemRegex.exec(text)) !== null) {
+		mindMap.notes.push(parseNote(itemMatch));
 	}
 
 	return mindMap;
@@ -122,18 +109,18 @@ export function createBlankNote(): Note {
 
 // parses map tag (contents only)
 export function parseMapTag(string: string): MapSettings {
-	const data = string.slice(mapTagOpen.length, string.length - mapTagClose.length)
-	const parameters = data.trim().split(';');
+	const parameters = string.trim().split(';');
 	const props: Partial<FSRSParameters> = {
-		enable_fuzz: parameters[2] !== "" ? parameters[2] === "true" : undefined, 
-		enable_short_term: parameters[3] !== "" ? parameters[3] === "true" : undefined, 
-		maximum_interval: parameters[4] !== "" ? parseFloat(parameters[4]) : undefined, 
-		request_retention: parameters[5] !== "" ? parseFloat(parameters[5]) : undefined, 
-		w: parameters[6] !== "" ? parseNumberArray(parameters[6]) : undefined, 
+		enable_fuzz: parameters[3] !== "" ? parameters[3] === "true" : undefined, 
+		enable_short_term: parameters[4] !== "" ? parameters[4] === "true" : undefined, 
+		maximum_interval: parameters[5] !== "" ? parseFloat(parameters[5]) : undefined, 
+		request_retention: parameters[6] !== "" ? parseFloat(parameters[6]) : undefined, 
+		w: parameters[7] !== "" ? parseNumberArray(parameters[7]) : undefined, 
 	};
 	return { 
-		separateHeadings: parameters[0] !== "" ? parameters[0] === "true" : false, 
-		crosslink: parameters[1] !== "" ? parameters[1] === "true" : true,
+		title: parameters[0], 
+		separateHeadings: parameters[1] !== "" ? parameters[1] === "true" : false, 
+		crosslink: parameters[2] !== "" ? parameters[2] === "true" : true,
 		studySettings: generatorParameters(props),
 	};
 }
@@ -178,7 +165,7 @@ export function parseNote(match: RegExpExecArray): Note {
 
 	// parse the card
 	let listItem = match[3];
-	const cardTagMatch = cardTagRegex.exec(match[3]);
+	const cardTagMatch = cardTagRegex.exec(listItem);
 	if (cardTagMatch) {
 		note.card = parseCard(cardTagMatch[1]);
 		listItem = listItem.slice(0, cardTagMatch.index);
@@ -213,18 +200,6 @@ export function getNoteId(content: string): { content: string, id: string | unde
 		}
 	}
 }
-
-// parses contents (<props> group) of note tag
-// export function parseNoteProps(str: string): NoteProperties {
-// 	const properties = createNoteProperties(true);
-// 	const props = str.split(';');
-	
-// 	properties.path = parsePath(props[0]);
-// 	properties.study = props[1] === "true";
-// 	properties.card = properties.study ? parseCard(props.slice(2)) : null;
-
-// 	return properties;
-// }
 
 export function parsePath(str: string): string[] {
 	return str.split('\\');
@@ -335,6 +310,7 @@ export function createCardTag(card: Card, includeTags?: boolean): string {
 // creates map tag
 export function createMapTag(settings: MapSettings, includeTags = true): string {
 	const propStrings: string[] = [
+		settings.title,
 		settings.separateHeadings.toString(), 
 		settings.crosslink.toString(), 
 		settings.studySettings.enable_fuzz.toString(), 
