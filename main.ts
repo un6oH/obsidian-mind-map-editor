@@ -5,8 +5,7 @@ import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { Settings, MindMapLayout, Warning, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
 import { mapTagRegex, createCardTag, toNoteID, toPathString, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
-import { map, MapState, updateEffect } from 'state-fields/map-state-field';
-// Remember to rename these classes and interfaces!
+import { editorField } from 'state-fields/editor-state-field';
 
 const DEFAULT_SETTINGS = {
 	layouts: [], 
@@ -31,7 +30,6 @@ export default class MindMapEditorPlugin extends Plugin {
 		
 		// 	const editor = activeView!.editor;35
 		this.registerEditorExtension([createMindMapEditorViewPlugin(this, () => this.checkNotes(), () => this.createCards(), () => this.openStudyMindMapModal())]);
-		this.registerEditorExtension([map]);
 
 		this.registerView(
 			VIEW_TYPE_MIND_MAP, 
@@ -47,53 +45,6 @@ export default class MindMapEditorPlugin extends Plugin {
 			proofreadNotes(activeView!.editor, library);
 			// new ProofreadNotesModal(this.app, activeView!.editor, library.warningLines, library.warnings).open();
 		};
-
-		// const updateNotesStatusBarItem = this.addStatusBarItem();
-		// updateNotesStatusBarItem.addClass('mod-clickable');
-		// updateNotesStatusBarItem.textContent = "Add cards";
-		// updateNotesStatusBarItem.onclick = () => {
-		// 	const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		// 	this.currentMindMapTitle = isMindMap(activeView!.editor);
-		// 	new UpdateNotesModal(this.app, activeView!.editor).open();
-		// };
-		
-		// const studyMindMapStatusBarItem = this.addStatusBarItem();
-		// studyMindMapStatusBarItem.addClass('mod-clickable');
-		// studyMindMapStatusBarItem.textContent = `Study mind map`;
-		// studyMindMapStatusBarItem.onclick = () => {
-		// 	const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
-		// 	const editor = activeView!.editor;
-		// 	const text = activeView!.editor.getRange(
-		// 		{ line: 0, ch: 0 }, 
-		// 		{ line: editor.lineCount(), ch: 0 }
-		// 	);
-		// 	const library = processDocument(editor.getDoc());
-		// 	if (library.warningLines.length != 0) {
-		// 		new Notice("Unresolved warnings - fix notes");
-		// 		proofreadNotes(editor, library);
-		// 		return;
-		// 	}
-		// 	const mindMap = parseMindMap(text);
-		// 	if (!mindMap) {
-		// 		new Notice("Mind map not found.");
-		// 		return;
-		// 	}
-
-		// 	new StudyMindMapModal(this, editor, mindMap).open();
-		// }
-
-		// const cursorIndexStatusBarItem = this.addStatusBarItem();
-		// cursorIndexStatusBarItem.addClass('mod-clickable');
-		// cursorIndexStatusBarItem.textContent = "Cursor at:";
-
-		// this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-		// 	const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
-		// 	const cursorPosition = editor?.getCursor('head');
-		// 	cursorIndexStatusBarItem.textContent = `Cursor at: ${cursorPosition?.line}, ${cursorPosition?.ch}`;
-		// });
-
-		this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.updateMapState()));
-		this.updateMapState();
 
 		// Add a command to create a mindmap template
 		this.addCommand({
@@ -154,16 +105,6 @@ export default class MindMapEditorPlugin extends Plugin {
 		return view.editor.cm as EditorView; 
 	}
 
-	updateMapState() {
-		const view = this.getActiveView();
-		if (view) {
-			const editorView = this.getEditorView(view);
-			editorView.dispatch({
-				effects: [updateEffect.of(null)]
-			});
-		}
-	}
-
 	getMindMap(view: MarkdownView | null = null): MindMap | null {
 		if (!view) {
 			view = this.getActiveView();
@@ -173,19 +114,7 @@ export default class MindMapEditorPlugin extends Plugin {
 			}
 		}
 
-		// @ts-expect-error, not typed
-		const editorView = view.editor.cm as EditorView;
-		const mapState: MapState = editorView.state.field(map);
-		if (!mapState.valid) {
-			console.log("getMindMap(): No valid mind map");
-			return null;
-		} else {
-			return {
-				map: mapState.map!, 
-				notes: mapState.notes!, 
-				tree: mapState.tree!
-			}
-		}
+		return null;
 	}
 
 	checkNotes(view: MarkdownView | null = null): boolean {

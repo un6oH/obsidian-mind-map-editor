@@ -2,25 +2,16 @@ import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } fro
 import { Note, MindMap, MapSettings, ListItem } from "types";
 import { interpolateRainbow, style } from "d3";
 
-export const listItemPattern = "(\\t*)(\\d+. |- )(.*)";
+export const listItemPattern = "(\\t*)(\\d+. |- )(.+)(\\*?)";
 export const listItemRegex = RegExp(listItemPattern, 'd');
 
 export const cardTagOpen = "%%card";
 export const cardTagClose = "%%";
 export const cardTagPattern = `${cardTagOpen}(.*?)${cardTagClose}`;
 export const cardTagRegex = RegExp(cardTagPattern, 'd');
-// export const noteTagOpen = "%%note";
-// export const noteTagClose = "%%";
-// export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${noteTagOpen}(?<props>.*?)${noteTagClose}`;
-// export const noteRegex = RegExp(notePattern, 'd');
+
 export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${cardTagOpen}(?<card>.*?)${cardTagClose}`;
 export const noteRegex = RegExp(notePattern, 'd');
-// [1]: list delimiter
-// [2]: content
-// [3]: card tag
-
-// export const noteTagPattern = `${noteTagOpen}(.*?)${noteTagClose}`;
-// export const noteTagRegex = RegExp(noteTagPattern, 'd');
 
 export const idTagPattern = "#(\\w*)$";
 export const idTagRegex = RegExp(idTagPattern, 'd');

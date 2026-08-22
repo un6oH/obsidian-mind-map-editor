@@ -16,34 +16,6 @@ import { ListItem, MapSettings, Note, Warning } from 'types';
 import { Card, State } from 'ts-fsrs';
 import { createCards } from 'main';
 
-// class MapStudyParametersWidget extends WidgetType {
-//   app: App;
-//   start: number; // index of tag
-//   end: number;
-
-//   constructor(app: App, start: number, end: number) {
-//     super();
-//     this.app = app;
-//     this.start = start;
-//     this.end = end;
-//   }
-
-//   toDOM(view: EditorView) {
-//     const button = document.createElement('button');
-//     button.textContent = 'Inspect map settings';
-//     button.className = "widget-map";
-//     button.onclick = () => {
-//       // console.log("creating map settings editor modal");
-//       // new MapSettingsEditorModal(this.app, view, this.start, this.end).open();
-//     };
-//     return button;
-//   }
-
-//   ignoreEvent() {
-//     return false;
-//   }
-// }
-
 class ControlPanel extends WidgetType {
   app: App;
   map: MapSettings;
