@@ -56,5 +56,5 @@ export interface MindMapLayout {
 }
 
 export enum Warning {
-  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, LinkConflict, LinkConflictReference, ContentNotDefined, ContentConflict
+  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, LinkConflict, LinkConflictReference, ContentNotDefined, ContentConflict, StudyConflict
 }

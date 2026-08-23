@@ -484,11 +484,12 @@ export class NotePropertyEditorModal extends Modal {
 		return;
 	}
 
+	// indices of noteMatch
 	updateData(indices: number[][]) {
 		const contentEdit = this.view.state.update({
 			changes: {
 				from: indices[3][0], 
-				to: indices[3][1], 
+				to: indices[4][1], 
 				insert: createNoteString(this.note), 
 			}
 		});

@@ -2,7 +2,7 @@ import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } fro
 import { Note, MindMap, MapSettings, ListItem } from "types";
 import { interpolateRainbow, style } from "d3";
 
-export const listItemPattern = "(\\t*)(\\d+. |- )(.+)(\\*?)";
+export const listItemPattern = "(\\t*)(\\d+\\. |- )(.+)(\\s*?)";
 export const listItemRegex = RegExp(listItemPattern, 'd');
 
 export const cardTagOpen = "%%card";
@@ -10,12 +10,11 @@ export const cardTagClose = "%%";
 export const cardTagPattern = `${cardTagOpen}(.*?)${cardTagClose}`;
 export const cardTagRegex = RegExp(cardTagPattern, 'd');
 
-export const notePattern = `^(?<indent>\\t*)(?<list>[0-9]+\\. |- )(?<content>.*?)${cardTagOpen}(?<card>.*?)${cardTagClose}`;
+export const notePattern = `^(?<indent>\\t*)(?<list>\\d+\\. |- )(?<content>.*?)${cardTagOpen}(?<card>.*?)${cardTagClose}`;
 export const noteRegex = RegExp(notePattern, 'd');
 
 export const idTagPattern = "#(\\w*)$";
 export const idTagRegex = RegExp(idTagPattern, 'd');
-
 
 export const mapTagOpen = "%%map";
 export const mapTagClose = "%%";
@@ -53,10 +52,10 @@ export function parseMindMap(text: string): MindMap | null {
 	}
 
 	// notes
-	const listItemRegex = new RegExp(notePattern, 'gm');
-	let itemMatch;
-	while ((itemMatch = listItemRegex.exec(text)) !== null) {
-		mindMap.notes.push(parseNote(itemMatch));
+	const noteRegex = new RegExp(notePattern, 'gm');
+	let noteMatch;
+	while ((noteMatch = noteRegex.exec(text)) !== null) {
+		mindMap.notes.push(parseNote(noteMatch));
 	}
 
 	return mindMap;
@@ -149,25 +148,18 @@ export function parseListItem(content: string): ListItem {
 // parse note with or without card
 // return note with assigned properties
 // must pass in a RegExpExecArray matched with the note pattern
+/** @param match noteRegex match */
 export function parseNote(match: RegExpExecArray): Note {
 	const note = {} as Note;
 
 	note.listIndex = parseListIndex(match[2]);
 
-	// parse the card
-	let listItem = match[3];
-	const cardTagMatch = cardTagRegex.exec(listItem);
-	if (cardTagMatch) {
-		note.card = parseCard(cardTagMatch[1]);
-		listItem = listItem.slice(0, cardTagMatch.index);
-	} else {
-		note.card = null;
-	}
-
-	const { content, id, type } = parseListItem(listItem);
+	const { content, id, type } = parseListItem(match[3]);
 	note.content = content;
 	note.id = id;
 	note.type = type;
+
+	note.card = parseCard(match[4]);
 
 	return note;
 }
@@ -196,7 +188,10 @@ export function parsePath(str: string): string[] {
 	return str.split('\\');
 }
 
-export function parseCard(tag: string): Card {
+export function parseCard(tag: string): Card | null {
+	if (tag === "") {
+		return null;
+	}
 	const props = tag.split(';');
 
 	return {
@@ -244,7 +239,11 @@ export function createNoteString(note: Note): string {
 	if (note.id !== undefined) {
 		str += " #" + note.id;
 	}
-	if (note.card) str += createCardTag(note.card, true);
+	if (note.card) {
+		str += createCardTag(note.card, true);
+	} else {
+		str += cardTagOpen + cardTagClose;
+	}
 	return str;
 }
 

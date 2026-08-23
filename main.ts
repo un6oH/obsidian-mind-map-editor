@@ -240,7 +240,7 @@ function processDocument(doc: Editor): NoteList {
 	const warningLines: number[] = []; // lines with associated warning
 	const warnings: Warning[] = []; // type of warning
 
-	const listRegex = RegExp("^(\\t*)([0-9]+\\. |- )(.+)"); // finds lines with a list delimiter and content
+	const listRegex = RegExp("^(\\t*)(\\d+\\. |- )(.+)"); // finds lines with a list delimiter and content
 
 	// line-by-line
 	for (let l = 0; l < doc.lineCount(); l++) {
@@ -260,6 +260,15 @@ function processDocument(doc: Editor): NoteList {
 
 		const level = match[1].length;
 		levels.push(level);
+
+		const study = canStudy(item.content, item.type);
+		const cardMatch = cardTagRegex.exec(match[3]);
+		if (cardMatch) {
+			if (study != (cardMatch[1] === "")) {
+				warningLines.push(l);
+				warnings.push(Warning.StudyConflict);
+			}
+		}
 
 		// note is marked with # or is a relation with no specified id; ignore note groups
 		if (item.id === "" || 
