@@ -1,6 +1,6 @@
 import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
 import { Note, MindMap, MindMapLayout, NoteGroup } from 'types';
-import { toPathString, colour, cardStateColours, formatContent } from 'helpers';
+import { colour, cardStateColours, formatContent } from 'helpers';
 import * as d3 from 'd3';
 import { Card, fsrs, FSRS, generatorParameters, Grade, Grades, IPreview, Rating, RecordLog, show_diff_message, State } from 'ts-fsrs';
 

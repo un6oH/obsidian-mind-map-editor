@@ -3,7 +3,7 @@ import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { Settings, MindMapLayout, Warning, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
-import { mapTagRegex, createCardTag, toNoteID, toPathString, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, createMapTag, errorRegex, errorTagRegex, removeTags, idTagRegex, getNoteId, noteRegex, parseNote, createNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
+import { mapTagRegex, generateCardString, toNoteID, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, generateMapString, errorRegex, errorTagRegex, removeTags, idTagRegex, noteRegex, parseNote, generateNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
 import { editorField } from 'state-fields/editor-state-field';
 
@@ -178,7 +178,7 @@ export default class MindMapEditorPlugin extends Plugin {
 export function updateMapSettings(editor: Editor, settings: MapSettings) {
 	const text = editor.getLine(1);
 	editor.replaceRange(
-		createMapTag(settings), 
+		generateMapString(settings), 
 		{ line: 1, ch: 0 },
 		{ line: 1, ch: text.length },
 	)
@@ -474,7 +474,7 @@ export function createCards(editor: Editor) {
 				const end = indices[0][1]; // end of line	
 				note.id = item.id;
 				editor.replaceRange(
-					createNoteString(note), 
+					generateNoteString(note), 
 					{ line: lineNumber, ch: start },
 					{ line: lineNumber, ch: end }
 				);
@@ -499,7 +499,7 @@ export function createCards(editor: Editor) {
 				const start = indices[3][0] // start of content
 				const end = indices[0][1]; // end of line	
 				editor.replaceRange(
-					createNoteString(note), 
+					generateNoteString(note), 
 					{ line: lineNumber, ch: start },
 					{ line: lineNumber, ch: end }
 				);

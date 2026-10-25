@@ -38,6 +38,29 @@ export const errorRegex = RegExp(errorPattern, 'md');
 // [1]: tag
 // [2]: type
 
+export function parseNumberArray(array: string): number[] {
+  const splitString = array.split(',');
+  return splitString.map((str) => parseFloat(str));
+}
+
+// parses map tag (contents only)
+export function parseMapTag(string: string): MapSettings {
+	const parameters = string.trim().split(';');
+	const props: Partial<FSRSParameters> = {
+		enable_fuzz: parameters[3] !== "" ? parameters[3] === "true" : undefined, 
+		enable_short_term: parameters[4] !== "" ? parameters[4] === "true" : undefined, 
+		maximum_interval: parameters[5] !== "" ? parseFloat(parameters[5]) : undefined, 
+		request_retention: parameters[6] !== "" ? parseFloat(parameters[6]) : undefined, 
+		w: parameters[7] !== "" ? parseNumberArray(parameters[7]) : undefined, 
+	};
+	return { 
+		title: parameters[0], 
+		separateHeadings: parameters[1] !== "" ? parameters[1] === "true" : false, 
+		crosslink: parameters[2] !== "" ? parameters[2] === "true" : true,
+		studySettings: generatorParameters(props),
+	};
+}
+
 export function parseMindMap(text: string): MindMap | null {
 	const mindMap = {} as MindMap;
 
@@ -87,34 +110,6 @@ export function noteTree(items: ListItem[], levels: number[], path: string[]): s
 	return paths;
 }
 
-export function createBlankNote(): Note {
-  return {
-		listIndex: 0, 
-    content: "", 
-		type: 'key word', 
-		id: undefined, 
-    card: null
-  }
-}
-
-// parses map tag (contents only)
-export function parseMapTag(string: string): MapSettings {
-	const parameters = string.trim().split(';');
-	const props: Partial<FSRSParameters> = {
-		enable_fuzz: parameters[3] !== "" ? parameters[3] === "true" : undefined, 
-		enable_short_term: parameters[4] !== "" ? parameters[4] === "true" : undefined, 
-		maximum_interval: parameters[5] !== "" ? parseFloat(parameters[5]) : undefined, 
-		request_retention: parameters[6] !== "" ? parseFloat(parameters[6]) : undefined, 
-		w: parameters[7] !== "" ? parseNumberArray(parameters[7]) : undefined, 
-	};
-	return { 
-		title: parameters[0], 
-		separateHeadings: parameters[1] !== "" ? parameters[1] === "true" : false, 
-		crosslink: parameters[2] !== "" ? parameters[2] === "true" : true,
-		studySettings: generatorParameters(props),
-	};
-}
-
 // content = listItemMatch[3]
 export function parseListItem(content: string): ListItem {
 	content = content.trim();
@@ -145,49 +140,12 @@ export function parseListItem(content: string): ListItem {
 	return result;
 }
 
-// parse note with or without card
-// return note with assigned properties
-// must pass in a RegExpExecArray matched with the note pattern
-/** @param match noteRegex match */
-export function parseNote(match: RegExpExecArray): Note {
-	const note = {} as Note;
-
-	note.listIndex = parseListIndex(match[2]);
-
-	const { content, id, type } = parseListItem(match[3]);
-	note.content = content;
-	note.id = id;
-	note.type = type;
-
-	note.card = parseCard(match[4]);
-
-	return note;
+export function parseListIndex(str: string): number {
+	const parse = parseFloat(str);
+	return isNaN(parse) ? 0 : parse;
 }
 
-// return "" to force ignoring groups
-// return null to allow regrouping
-export function getNoteId(content: string): { content: string, id: string | undefined } {
-	content = content.trim();
-
-	const idTagMatch = idTagRegex.exec(content);
-	if (idTagMatch) { // id specified
-		content = content.slice(0, (idTagMatch as any).indices[0][0]).trim();
-		return {
-			content, 
-			id: idTagMatch[1]
-		}
-	} else { // id not specified
-		return {
-			content, 
-			id: undefined
-		}
-	}
-}
-
-export function parsePath(str: string): string[] {
-	return str.split('\\');
-}
-
+// parse parameters in card tag
 export function parseCard(tag: string): Card | null {
 	if (tag === "") {
 		return null;
@@ -207,6 +165,24 @@ export function parseCard(tag: string): Card | null {
 	}
 }
 
+// parse note with card tag
+// return note with assigned properties
+// must pass in a RegExpExecArray matched with the note pattern
+export function parseNote(match: RegExpExecArray): Note {
+	const note = {} as Note;
+
+	note.listIndex = parseListIndex(match[2]);
+
+	const { content, id, type } = parseListItem(match[3]);
+	note.content = content;
+	note.id = id;
+	note.type = type;
+
+	note.card = parseCard(match[4]);
+
+	return note;
+}
+
 export function canStudy(content: string, type: 'key word' | 'relation' | 'info'): boolean {
 	switch(type) {
 		case 'key word': return true
@@ -221,10 +197,8 @@ const NOTE_ID_MAX_LENGTH = 12;
 // const pastedImageRegexGlobal = RegExp(pastedImagePattern, 'gm');
 export function toNoteID(str: string, title: boolean = false): string {
 	// console.log("toNoteID() string:", str);
-	const imageMatch = /\!\[\[Pasted image (.*?)\.png\]\]/.exec(str);
+	const imageMatch = imageRegex.exec(str);
 	if (imageMatch) {
-		// console.log(imageMatch[1]);
-		// return "pastedimage" + Math.round(Math.random() * 100000);
 		return imageMatch[1];
 	}
 
@@ -233,72 +207,42 @@ export function toNoteID(str: string, title: boolean = false): string {
 	return lowercase
 }
 
-export function createNoteString(note: Note): string {
+export function generateCardString(card: Card, includeTags = true): string {
+	let tag = includeTags ? cardTagOpen : "";
+	if (card !== null) {
+		const data = [
+			card.due.toISOString(),
+			card.stability.toString(),
+			card.difficulty.toString(),
+			card.elapsed_days.toString(),
+			card.scheduled_days.toString(),
+			card.reps.toString(),
+			card.lapses.toString(),
+			card.state.toString(), 
+			card.last_review ? card.last_review.toISOString() : ""
+		];
+		data.forEach(str => tag += str + ';');
+	}
+	tag += includeTags ? cardTagClose : "";
+	return tag;
+}
+
+export function generateNoteString(note: Note): string {
 	// let str = note.listIndex == 0 ? "- " : `${note.listIndex}. `;
 	let str = note.content;
 	if (note.id !== undefined) {
 		str += " #" + note.id;
 	}
 	if (note.card) {
-		str += createCardTag(note.card, true);
+		str += generateCardString(note.card, true);
 	} else {
 		str += cardTagOpen + cardTagClose;
 	}
 	return str;
 }
 
-// export function createNoteTag(props: NoteProperties, includeTags?: boolean): string {
-// 	// console.log("createNoteTag(): props:", props);
-// 	let string = includeTags ? noteTagOpen : "";
-
-// 	// basic properties
-// 	[ 
-// 		toPathString(props.path),
-// 		String(props.study), 
-// 	].forEach(str => string += str + ';');
-
-// 	// note does not have card, but needs one
-// 	if (props.study && !props.card) props.card = createEmptyCard();
-
-// 	// add card properties
-// 	if (props.card) {
-// 		const cardPropStrings = [
-// 			props.card.due.toISOString(), 
-// 			props.card.stability.toString(),
-// 			props.card.difficulty.toString(),
-// 			props.card.elapsed_days.toString(),
-// 			props.card.scheduled_days.toString(),
-// 			props.card.reps.toString(),
-// 			props.card.lapses.toString(),
-// 			props.card.state.toString(), 
-// 			props.card.last_review ? props.card.last_review.toISOString() : ""
-// 		];
-// 		cardPropStrings.forEach(str => string += str + ';');
-// 	}
-
-// 	string += includeTags ? noteTagClose : "";
-// 	return string;
-// }
-export function createCardTag(card: Card, includeTags?: boolean): string {
-	let tag = includeTags ? cardTagOpen : "";
-	const data = [
-		card.stability.toString(),
-		card.due.toISOString(),
-		card.difficulty.toString(),
-		card.elapsed_days.toString(),
-		card.scheduled_days.toString(),
-		card.reps.toString(),
-		card.lapses.toString(),
-		card.state.toString(), 
-		card.last_review ? card.last_review.toISOString() : ""
-	];
-	data.forEach(str => tag += str + ';');
-	tag += includeTags ? cardTagClose : "";
-	return tag;
-}
-
 // creates map tag
-export function createMapTag(settings: MapSettings, includeTags = true): string {
+export function generateMapString(settings: MapSettings, includeTags = true): string {
 	const propStrings: string[] = [
 		settings.title,
 		settings.separateHeadings.toString(), 
@@ -317,35 +261,8 @@ export function createMapTag(settings: MapSettings, includeTags = true): string 
 	return string;
 }
 
-export function toPathString(path: string[]): string {
-	if (!path) console.log("toPathString(): error");
-	return path.join('\\');
-}
-
-export function formatPath(path: string[]): string {
-	return path.join(' > ');
-}
-
-export function parseNumberArray(array: string): number[] {
-  const splitString = array.split(',');
-  return splitString.map((str) => parseFloat(str));
-}
-
-export function parseListIndex(str: string): number {
-	const parse = parseFloat(str);
-	return isNaN(parse) ? 0 : parse;
-}
 
 export function removeTags(text: string): string {
-	// let noteTagMatch = noteTagRegex.exec(text) as any;
-	// if (noteTagMatch) {
-	// 	text = text.substring(0, noteTagMatch.indices[0][0]);
-	// }
-	// let errorTagMatch = errorTagRegex.exec(text) as any;
-	// if (errorTagMatch) {
-	// 	text = text.substring(0, errorTagMatch.indices[0][0]);
-	// }
-	// return text.trim();
 	return text.split('%%', 1)[0].trim();
 }
 
@@ -357,11 +274,8 @@ interface TextFragment {
 }
 export function formatContent(document: Document, text: string, viewImageCallback: (url: string) => void): { content: Element, hidden: Element } {
 	const fragments: TextFragment[] = [];
-	const imageRegex = new RegExp(imagePattern, 'g');
-	const infoRegex = new RegExp(infoPattern);
-
 	let infoMatch = infoRegex.exec(text);
-	if (infoMatch) { // no clozes
+	if (infoMatch) { // - (lorem ipsum) %%card%%
 		fragments.push({
 			text, 
 			hidden: false, 
@@ -373,28 +287,24 @@ export function formatContent(document: Document, text: string, viewImageCallbac
 				fragments: [], 
 			}]
 		});
-		// console.log("formatContent()", text, "is an info node", infoMatch);
 	} else {
-		// check if text has a ':'
 		let colonMatch = RegExp(`.+:\\s*`).exec(text);
-		if (colonMatch) {
-			// before delimiter
+		if (colonMatch) { // - lorem: ipsum %%card...%% OR - lorem ipsum: %%card%%
 			let before = colonMatch[0];
-			// console.log(text, before);
 			fragments.push({
 				text: before, 
 				hidden: false,
 				image: false,  
 				fragments: []
 			});
-			let after = text.slice(before.length);
-			if (after) fragments.push({ // property: value pair. defaults to cloze
+			let after = text.slice(before.length); // 
+			if (after) fragments.push({
 				text: after, 
 				hidden: true,
 				image: false,  
 				fragments: [] 
 			});
-		} else { // not a ':' delimited phrase. defaults to key word
+		} else { // - lorem ipsum %%card...%%
 			fragments.push({
 				text: text, 
 				hidden: true,
@@ -404,35 +314,35 @@ export function formatContent(document: Document, text: string, viewImageCallbac
 		}
 		
 		// find clozes
-		fragments.forEach((fragment, i) => {
-			let text = fragment.text;
+		fragments.forEach((parentFragment) => {
+			let text = parentFragment.text;
 			if (!text) return;
 
-			const regex = /{(.*?)}/g;
+			const clozeRegex = /{(.*?)}/g;
 			let clozeMatch;
 			let prevLastIndex = 0;
-			while ((clozeMatch = regex.exec(text)) !== null) {
-				fragment.hidden = false; // do not hide if there are clozes
+			while ((clozeMatch = clozeRegex.exec(text)) !== null) {
+				parentFragment.hidden = false; // do not hide if there are clozes
 				if (clozeMatch.index > prevLastIndex) { // add text before the match to the fragment list
-					fragment.fragments.push({
+					parentFragment.fragments.push({
 						text: text.slice(prevLastIndex, clozeMatch.index), 
 						hidden: false,
 						image: false,
 						fragments: []
 					});
 				}
-				fragment.fragments.push({
+				parentFragment.fragments.push({
 					text: clozeMatch[1], 
 					hidden: true,
 					image: false,
 					fragments: [] 
 				});
-				prevLastIndex = regex.lastIndex;
+				prevLastIndex = clozeRegex.lastIndex;
 			}
 			if (prevLastIndex < text.length) { // add last fragment
-				fragment.fragments.push({
+				parentFragment.fragments.push({
 					text: text.slice(prevLastIndex), 
-					hidden: fragment.hidden,
+					hidden: parentFragment.hidden,
 					image: false,
 					fragments: []
 				});
@@ -442,25 +352,25 @@ export function formatContent(document: Document, text: string, viewImageCallbac
 	}
 
 	// check for images in each subfragment
-	fragments.forEach((fragment, i) => {
-		fragment.fragments.forEach((subFragment, j) => {
+	fragments.forEach((fragment) => {
+		fragment.fragments.forEach((subFragment) => {
 			let imageMatch;
 			let prevLastIndex = 0;
 			let text = subFragment.text;
 			const imageRegex = RegExp(imagePattern, 'g');
+			const hidden = subFragment.hidden
 			while ((imageMatch = imageRegex.exec(text)) !== null) {
-				fragment.hidden = false; // if an image is found, the 
 				if (imageMatch.index > prevLastIndex) { // add text before the match to the fragment list
 					subFragment.fragments.push({
 						text: text.slice(prevLastIndex, imageMatch.index), 
-						hidden: subFragment.hidden,
+						hidden, // hidden if the parent fragment is hidden
 						image: false,
 						fragments: []
 					});
 				}
 				subFragment.fragments.push({
 					text: imageMatch[1], // set the text to the image url 
-					hidden: subFragment.hidden,
+					hidden,
 					image: true,
 					fragments: []
 				});
@@ -469,7 +379,7 @@ export function formatContent(document: Document, text: string, viewImageCallbac
 			if (prevLastIndex < text.length) { // add last fragment
 				subFragment.fragments.push({
 					text: text.slice(prevLastIndex), 
-					hidden: subFragment.hidden,
+					hidden,
 					image: false,
 					fragments: []
 				});
@@ -484,20 +394,17 @@ export function formatContent(document: Document, text: string, viewImageCallbac
   hiddenLabel.addClass("label-hidden");
 	const hiddenText = "[ . . . ]"
 	const populate = (fragment: TextFragment, parentHidden: boolean) => {
-		// console.log(fragment);
-		if (fragment.fragments.length) {
+		if (fragment.fragments.length > 0) {
 			// condense all fragments within a hidden fragment to one box
 			if (fragment.hidden && !parentHidden) {
 				let hiddenFragment = document.createElement('span');
 				hiddenFragment.textContent = hiddenText;
 				hiddenFragment.addClass('fragment-hidden');
 				hiddenLabel.appendChild(hiddenFragment);
-				// console.log("formatContent() added hidden fragment:", fragment.text, "to: ", text);
 			}
 			// recursively populate content
 			fragment.fragments.forEach(f => populate(f, fragment.hidden)); 
-		} else {
-			// console.log('populate() populating element');
+		} else { // terminal fragment; add the formatted text
 			let contentFragment = document.createElement('span');
 			if (fragment.image) {
 				contentFragment.textContent = "[image]";

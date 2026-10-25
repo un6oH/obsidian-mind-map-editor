@@ -22,9 +22,14 @@ If your plugin does not need CSS, delete this file.
   margin: 0 0.5em 0.5ex 0;
 }
 
+.widget-control-panel-spacer {
+  display: block;
+  height: 0;
+}
+
 .widget-map-button {
   margin-right: 0.5em;
-  /* margin-bottom: 1ex; */
+  margin-bottom: 0.5ex;
 }
 
 .widget-node-icon {

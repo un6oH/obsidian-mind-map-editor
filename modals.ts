@@ -2,7 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State } from 'ts-fsrs';
 import { ListItem, MapSettings, MindMap, Note, Warning } from 'types';
-import { notePattern, parseNote, parseNumberArray, parsePath, parseMapTag, toNoteID, toPathString, formatPath, createMapTag, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, createNoteString, listItemRegex } from 'helpers';
+import { notePattern, parseNote, parseNumberArray, parseMapTag, toNoteID, generateMapString, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, generateNoteString, listItemRegex } from 'helpers';
 import MindMapEditorPlugin, { dismissWarnings, openMindMapView, updateMapSettings, createCards } from 'main';
 
 export class MindMapCreatorModal extends Modal {
@@ -92,7 +92,7 @@ export class MindMapCreatorModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					this.close();
-					editorCallback(createMapTag(map, true));
+					editorCallback(generateMapString(map, true));
 				})
 			)
 	}
@@ -281,7 +281,7 @@ export class MapSettingsEditorModal extends Modal {
 
 	updateSettings(view: EditorView, settings: MapSettings, from: number, to: number) {
 		const edit = view.state.update({
-			changes: { from, to, insert: createMapTag(settings, false) }
+			changes: { from, to, insert: generateMapString(settings, false) }
 		});
 		view.dispatch(edit);
 	}
@@ -296,7 +296,6 @@ export class NotePropertyEditorModal extends Modal {
 	constructor(app: App, view: EditorView, listItemMatch: RegExpExecArray) {
 		super(app);
 		this.view = view;
-
 		this.note = parseNote(listItemMatch);
 		this.initial = parseNote(listItemMatch);
 
@@ -489,8 +488,8 @@ export class NotePropertyEditorModal extends Modal {
 		const contentEdit = this.view.state.update({
 			changes: {
 				from: indices[3][0], 
-				to: indices[4][1], 
-				insert: createNoteString(this.note), 
+				to: indices[0][1], 
+				insert: generateNoteString(this.note), 
 			}
 		});
 		this.view.dispatch(contentEdit);

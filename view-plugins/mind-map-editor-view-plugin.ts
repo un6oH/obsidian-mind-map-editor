@@ -8,67 +8,33 @@ import {
   Decoration,
   PluginSpec,
 } from '@codemirror/view';
-import { EditorSelection, RangeSetBuilder } from '@codemirror/state';
+import { EditorSelection, Line, RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, getNoteId, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseMapTag, formatContent, cardTagOpen, cardTagClose } from 'helpers';
+import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseMapTag, formatContent, cardTagOpen, cardTagClose } from 'helpers';
 import { ListItem, MapSettings, Note, Warning } from 'types';
 import { Card, State } from 'ts-fsrs';
 import { createCards } from 'main';
 
-class ControlPanel extends WidgetType {
+class MapTitleWidget extends WidgetType {
   app: App;
   map: MapSettings;
   match: RegExpExecArray;
-  checkNotesCallback: () => void;
-  createCardsCallback: () => void;
-  studyCallback: () => void;
 
-  constructor(app: App, match: RegExpExecArray, checkNotesCallback: () => void, addCardsCallback: () => void, studyCallback: () => void) {
+  constructor(app: App, match: RegExpExecArray) {
     super();
     this.app = app;
     this.match = match;
     this.map = parseMapTag(match[1]);
-    this.checkNotesCallback = checkNotesCallback;
-    this.createCardsCallback = addCardsCallback;
-    this.studyCallback = studyCallback;
   }
 
-  toDOM(view: EditorView) {
+  toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
     container.addClass('widget-map-title');
 
     const title = document.createElement('h1');
     title.textContent = this.map.title;
     container.appendChild(title);
-
-    /* const settingsButton = document.createElement('button');
-    settingsButton.textContent = 'Settings';
-    settingsButton.addClass("widget-map-button");
-    settingsButton.id = 'widget-map-settings-button';
-    settingsButton.onclick = () => {
-      // console.log("creating map settings editor modal");
-      new MapSettingsEditorModal(this.app, view, this.match).open();
-    };
-    container.appendChild(settingsButton); */
-
-    /* const checkNotesButton = document.createElement('button');
-    checkNotesButton.textContent = 'Check Notes';
-    checkNotesButton.id = 'widget-map-check-notes-button';
-    checkNotesButton.onclick = this.checkNotesCallback;
-    container.appendChild(checkNotesButton); */
-
-    /* const createCardsButton = document.createElement('button');
-    createCardsButton.textContent = 'Create Cards';
-    createCardsButton.id = 'widget-map-add-cards-button';
-    createCardsButton.onclick = this.createCardsCallback;
-    container.appendChild(createCardsButton); */
-
-    /* const studyButton = document.createElement('button');
-    studyButton.textContent = 'Study Mind Map';
-    studyButton.id = 'widget-map-study-button';
-    studyButton.onclick = this.studyCallback;
-    container.appendChild(studyButton); */
 
     return container;
   }
@@ -78,6 +44,19 @@ class ControlPanel extends WidgetType {
   }
 }
 
+class ControlPanelSpacer extends WidgetType {
+  constructor() {
+    super();
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const span = document.createElement('span');
+    span.addClass('widget-control-panel-spacer');
+    return span;
+  }
+}
+
+// Control panel buttons are separate b/c the button requires 2 clicks if within the parent
 class MapSettingsButton extends WidgetType {
   app: App;
   map: MapSettings;
@@ -311,10 +290,6 @@ class ErrorWidget extends WidgetType {
   }
 }
 
-const mapTagOpenLength = mapTagOpen.length;
-const mapTagCloseLength = mapTagClose.length;
-// const noteTagOpenLength = noteTagOpen.length;
-// const noteTagCloseLength = noteTagClose.length;
 export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback: () => void, createCardsCallback: () => void, studyCallback: () => void) {
   return ViewPlugin.fromClass(
     class MindMapEditorViewPlugin implements PluginValue {
@@ -338,23 +313,35 @@ export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback
         for (let { from, to } of view.visibleRanges) {
           const text = view.state.doc.sliceString(from, to);
 
-          let noteMatch;
-          const noteRegex = RegExp(notePattern, 'dgm');
-          // find every match in the full text
-          while ((noteMatch = noteRegex.exec(text)) !== null) {
-            // check for card
-            const indices = (noteMatch as any).indices;
-            indices.forEach((pair: number[], i: number, array: number[][]) => 
-              array[i] = [pair[0] + from, pair[1] + from]);
+          // do note matching line by line
+          // sliceString does not include original text. excludes image tags
+          let lineStart = from;
+          let lineEnd = 0;
+          let lines: Line[] = [];
+          while (lineEnd < to) {
+            let line = view.state.doc.lineAt(lineStart);
+            lineEnd = line.to;
+            lineStart = line.to + 1;
+            lines.push(line);
+          }
+        
+          for (let line of lines) {
+            const noteRegex = RegExp(notePattern, 'd'); 
+            let noteMatch = noteRegex.exec(line.text);
+            if (noteMatch) {
+              const indices = (noteMatch as any).indices;
+              indices.forEach((pair: number[], i: number, array: number[][]) => 
+                array[i] = [pair[0] + line.from, pair[1] + line.from]); 
 
-            const start = indices[4][0] - cardTagOpen.length;
-            const end = indices[4][1] + cardTagClose.length;
+              const start = indices[4][0] - cardTagOpen.length;
+              const end = indices[4][1] + cardTagClose.length;
 
-            const deco = Decoration.replace({
-              widget: new NoteDataWidget(plugin.app, noteMatch),
-              inclusive: false
-            });
-            decorations.push({ start, end, deco });
+              const deco = Decoration.replace({
+                widget: new NoteDataWidget(plugin.app, noteMatch),
+                inclusive: false
+              });
+              decorations.push({ start, end, deco });
+            }
           }
           
           let mapMatch;
@@ -362,15 +349,19 @@ export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback
           while ((mapMatch = mapTagRegex.exec(text)) !== null) {
             const indices = (mapMatch as any).indices;
             indices[0] = [indices[0][0] + from, indices[0][1] + from];
-            const deco = Decoration.replace({
-              widget: new ControlPanel(plugin.app, mapMatch, checkNotesCallback, createCardsCallback, studyCallback),
-              inclusive: false
-            });
-            decorations.push({ start: indices[0][0], end: indices[0][1], deco});
-            decorations.push({ start: indices[0][1], end: indices[0][1], deco: Decoration.widget({ widget: new MapSettingsButton(plugin.app, mapMatch) })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], deco: Decoration.widget({ widget: new CheckNotesButton(plugin.app, checkNotesCallback) })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], deco: Decoration.widget({ widget: new CreateCardsButton(plugin.app, createCardsCallback) })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], deco: Decoration.widget({ widget: new StudyButton(plugin.app, studyCallback) })})
+
+            decorations.push({ start: indices[0][0], end: indices[0][1], 
+              deco: Decoration.replace({ widget: new MapTitleWidget(plugin.app, mapMatch) })});
+            decorations.push({ start: indices[0][1], end: indices[0][1], 
+              deco: Decoration.widget({ widget: new ControlPanelSpacer() })})
+            decorations.push({ start: indices[0][1], end: indices[0][1], 
+              deco: Decoration.widget({ widget: new MapSettingsButton(plugin.app, mapMatch) })})
+            decorations.push({ start: indices[0][1], end: indices[0][1], 
+              deco: Decoration.widget({ widget: new CheckNotesButton(plugin.app, checkNotesCallback) })})
+            decorations.push({ start: indices[0][1], end: indices[0][1], 
+              deco: Decoration.widget({ widget: new CreateCardsButton(plugin.app, createCardsCallback) })})
+            decorations.push({ start: indices[0][1], end: indices[0][1], 
+              deco: Decoration.widget({ widget: new StudyButton(plugin.app, studyCallback) })})
           }
 
           let errorMatch;
