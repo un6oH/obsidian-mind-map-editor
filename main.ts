@@ -444,10 +444,6 @@ export function createCards(editor: Editor) {
 		return;
 	}
 
-	// recursively iterates through list to generate a list of paths
-	// const paths = noteTree(noteList.listItems, noteList.levels, []);
-	// console.log("updateNotes(): parsed note tree. paths:", paths);
-
 	// update the props tag for each note
 	for (let i = 0; i < noteList.lines.length; i++) {
 		const item = noteList.listItems[i];

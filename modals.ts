@@ -352,16 +352,18 @@ export class NotePropertyEditorModal extends Modal {
 			.setDesc("Node will not merge with similar nodes")
 			.addToggle((toggle) => 
 				unlinkToggle = toggle
-					.setValue(this.note.id === "")
+					.setValue(this.note.id === "") // blank # means force unlink
 					.onChange((unlink) => {
 						if (unlink) {
 							this.note.id = "";
 							idField.setPlaceholder("linking disabled").setValue("");
 						} else {
-							this.note.id = this.initial.id;
+							console.log(this.initial.id);
+							this.note.id = this.initial.id ? this.initial.id : undefined;
 							let newText = this.initial.id ? this.initial.id : "";
 							idField.setPlaceholder(newText).setValue(newText);
 						}
+						idField.setDisabled(unlink);
 					})
 			);
 
