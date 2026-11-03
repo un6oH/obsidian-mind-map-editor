@@ -9,7 +9,7 @@ import {
   PluginSpec,
 } from '@codemirror/view';
 import { EditorSelection, Line, RangeSetBuilder } from '@codemirror/state';
-import { MapSettingsEditorModal, NotePropertyEditorModal } from 'modals';
+import { MapSettingsEditorModal, NoteEditorModal } from 'modals';
 import { App, EditorRange, Plugin } from 'obsidian';
 import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseMapTag, formatContent, cardTagOpen, cardTagClose } from 'helpers';
 import { ListItem, MapSettings, Note, Warning } from 'types';
@@ -203,7 +203,7 @@ class NoteDataWidget extends WidgetType {
     }
 
     block.onclick = () => {
-      new NotePropertyEditorModal(this.app, view, this.match).open();
+      new NoteEditorModal(this.app, view, this.match).open();
     };
 
     return block;

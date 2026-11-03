@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view';
-import { App, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
+import { App, ButtonComponent, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State } from 'ts-fsrs';
 import { ListItem, MapSettings, MindMap, Note, Warning } from 'types';
 import { notePattern, parseNote, parseNumberArray, parseMapTag, toNoteID, generateMapString, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, generateNoteString, listItemRegex } from 'helpers';
@@ -288,19 +288,21 @@ export class MapSettingsEditorModal extends Modal {
 }
 
 // Called from note widget. Specifies start and end indices of text within widget
-export class NotePropertyEditorModal extends Modal {
-	view: EditorView;
-	note: Note;
-	initial: Note;
-
+export class NoteEditorModal extends Modal {
 	constructor(app: App, view: EditorView, listItemMatch: RegExpExecArray) {
 		super(app);
-		this.view = view;
-		this.note = parseNote(listItemMatch);
-		this.initial = parseNote(listItemMatch);
+		const note = parseNote(listItemMatch);
+		const card = note.card!;
+		const initial = parseNote(listItemMatch);
+
+		let contentField: TextComponent;
+		let unlinkToggle: ToggleComponent;
+		let idField: TextComponent;
+		let studyToggle: ToggleComponent;
+		let applyChangesButton: ButtonComponent;
 
 		let title = "";
-		switch(this.note.type) {
+		switch(note.type) {
 			case 'key word':
 				title += "[Key word] ";
 				break;
@@ -311,7 +313,7 @@ export class NotePropertyEditorModal extends Modal {
 				title += "[Info] ";
 				break;
 		}
-		title += this.note.content;
+		title += note.content;
 		this.setTitle(title);
 
 		// displays path
@@ -319,48 +321,50 @@ export class NotePropertyEditorModal extends Modal {
       .setDesc("show path here");
 
 		// settings
-		let contentField: TextComponent;
 		new Setting(this.contentEl)
 			.setName("Content")
-			.setDesc("Warning: changing content will disconnect children and linked notes")
+			// .setDesc("Warning: changing content may disconnect linked notes")
 			.addText((text) => 
 				contentField = text
-					.setPlaceholder(this.initial.content)
-					.setValue(this.note.content)
+					.setPlaceholder(initial.content)
+					.setValue(note.content)
 					.onChange((value) => {
 						const { content, type } = parseListItem(value)
-						this.note.content = content;
+						note.content = content;
+						if (content === "" && !note.id) {
+							applyChangesButton.setDisabled(true);
+						} else {
+							applyChangesButton.setDisabled(false);
+						}
 						studyToggle.setValue(canStudy(content, type));
 						// update the path display 
 					}))
-			.addButton((button) => button
-				.setButtonText("Reset")
-				.setCta()
-				.onClick(() => {
-					contentField.setValue(this.initial.content);
-					this.note.content = this.initial.content;
-					studyToggle.setValue(this.initial.card ? true : false);
-					// update the path display
-					// update the card display
-				})
+			.addButton((button) => 
+				button
+					.setButtonText("Reset")
+					.setCta()
+					.onClick(() => {
+						contentField.setValue(initial.content);
+						note.content = initial.content;
+						studyToggle.setValue(initial.card ? true : false);
+						// update the path display
+						// update the card display
+					})
 			)
 
-		let unlinkToggle: ToggleComponent;
-		let idField: TextComponent;
 		new Setting(this.contentEl)
 			.setName("Force unlink")
 			.setDesc("Node will not merge with similar nodes")
 			.addToggle((toggle) => 
 				unlinkToggle = toggle
-					.setValue(this.note.id === "") // blank # means force unlink
+					.setValue(note.id === "") // blank # means force unlink
 					.onChange((unlink) => {
 						if (unlink) {
-							this.note.id = "";
+							note.id = "";
 							idField.setPlaceholder("linking disabled").setValue("");
 						} else {
-							console.log(this.initial.id);
-							this.note.id = this.initial.id ? this.initial.id : undefined;
-							let newText = this.initial.id ? this.initial.id : "";
+							note.id = initial.id ? initial.id : undefined;
+							let newText = initial.id ? initial.id : "";
 							idField.setPlaceholder(newText).setValue(newText);
 						}
 						idField.setDisabled(unlink);
@@ -372,12 +376,21 @@ export class NotePropertyEditorModal extends Modal {
 			.setDesc("Add a new tag or search existing tags. Letters and numbers only")
 			.addText((text) => 
 				idField = text
-					.setPlaceholder(this.note.id === "" ? "linking disabled" : (this.note.id ? this.note.id : ""))
-					.setValue(this.note.id ? this.note.id : "")
+					.setPlaceholder(note.id === "" ? "linking disabled" : (note.id ? note.id : ""))
+					.setValue(note.id ? note.id : "")
+					.setDisabled(note.id === "")
 					.onChange((value) => {
 						let validId = value.replace(/[^a-zA-Z0-9]/, '');
-						this.note.id = validId;
 						idField.setValue(validId);
+						if (validId === "") {
+							note.id = undefined;
+							if (note.content === "") {
+								applyChangesButton.setDisabled(true);
+							}
+						} else {
+							applyChangesButton.setDisabled(false);
+							note.id = validId;
+						}
 					})
 			)
 			.addButton((button) => button
@@ -385,15 +398,15 @@ export class NotePropertyEditorModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					idField.setValue("");
-					this.note.id = undefined;
+					note.id = undefined;
 				})
 			)
 			.addButton((button) => button
 				.setButtonText("Search")
 				.setCta()
 				.onClick(() => {
-					new IdSuggestModal(app, view, this.note.content, (id: string) => {
-						this.note.id = id;
+					new IdSuggestModal(app, view, note.content, (id: string) => {
+						note.id = id;
 						unlinkToggle.setValue(false);
 						idField.setValue(id);
 						// update the content
@@ -402,108 +415,98 @@ export class NotePropertyEditorModal extends Modal {
 			);
 		
 		// toggle to select studyable
-		let studyToggle: ToggleComponent;
-		new Setting(this.contentEl)
+		const studySetting = new Setting(this.contentEl)
 			.setName('Studyable')
 			.addToggle((toggle) => 
 				studyToggle = toggle
-					.setValue(this.note.card ? true : false)
+					.setValue(note.card ? true : false)
 					.onChange((study) => {
 						if (study) {
-							this.note.card = this.initial.card ? this.initial.card : createEmptyCard();
-							showCardSettings(this.note.card!);
+							note.card = initial.card ? initial.card : createEmptyCard();
+							studySetting.setDesc("");
+							applyChangesButton.setButtonText("Apply changes");
+							unlockCardSettings();
 						} else {
-							this.note.card = null;
-							hideCardSettings();
+							note.card = null;
+							studySetting.setDesc("Incorrect format to be studied. The card will be deleted.");
+							applyChangesButton.setButtonText("Delete card");
+							lockCardSettings();
 						}
 					})
+					.setDisabled(true)
+			);
+			
+		let dueDateSetting: Setting;
+		dueDateSetting = new Setting(this.contentEl)
+			.setName('Due date')
+			.addText((text) =>
+				text.setValue(card.due.toString()).onChange((value) => {
+					let newDate = new Date(value);
+					if (newDate.valueOf()) card.due = newDate;
+				})
 			);
 
 		// card params
-		const settings = [
-			new Setting(this.contentEl).setName('Card due date (can edit)'),
-			new Setting(this.contentEl).setName('Card stability'),
-			new Setting(this.contentEl).setName('Card difficulty'),
-			new Setting(this.contentEl).setName('Card elapsed days / scheduled days'),
-			new Setting(this.contentEl).setName('Card reps/lapses'),
-			new Setting(this.contentEl).setName('Card state'),
-			new Setting(this.contentEl).setName('Card last review')
-		];
+		const info = new DocumentFragment();
+		info.append(
+			createEl('p', { text: `Stability: ${card.stability.toString()}` }),
+			createEl('p', { text: `Difficulty: ${card.difficulty.toString()}` }),
+			createEl('p', { text: `Elapsed days: ${card.elapsed_days.toString()}` }),
+			createEl('p', { text: `Scheduled days: ${card.scheduled_days.toString()}` }),
+			createEl('p', { text: `Reps: ${card.reps.toString()}` }),
+			createEl('p', { text: `Lapses: ${card.lapses.toString()}` }),
+			createEl('p', { text: `State: ${State[card.state]}` }),
+			createEl('p', { text: `Last Reviewed: ${card.last_review ? card.last_review.toString() : "Not studied yet"}` }),
+		)
+		new Setting(this.contentEl)
+			.setName("Other card information")
+			.setHeading()
+			.setDesc(info);
 
-		const showCardSettings = (card: Card) => {
-			settings[0]
-				.addText((text) =>
-					text.setValue(card.due.toString()).onChange((value) => {
-						let newDate = new Date(value);
-						if (newDate.valueOf()) card.due = newDate;
-					}));
-			settings[1]
-				.addText((text) =>
-					text.setPlaceholder(card.stability.toString()).setDisabled(true));
-			settings[2]
-				.addText((text) =>
-					text.setPlaceholder(card.difficulty.toString()).setDisabled(true));
-			settings[3]
-				.addText((text) =>
-					text.setPlaceholder(card.elapsed_days.toString() + " / " + card.scheduled_days.toString()).setDisabled(true));
-			settings[4]
-				.addText((text) =>
-					text.setPlaceholder(card.reps.toString() + " / " + card.lapses.toString()).setDisabled(true));
-			settings[5]
-				.addText((text) =>
-					text.setPlaceholder(State[card.state]).setDisabled(true));
-			settings[6]
-				.addText((text) =>
-					text.setPlaceholder(card.last_review ? card.last_review.toString() : "Not studied yet"));
+		const unlockCardSettings = () => {
+			dueDateSetting.setDisabled(false);
 		}
-		const hideCardSettings = () => {
-			settings.forEach((setting) => setting.clear());
+		const lockCardSettings = () => {
+			dueDateSetting.setDisabled(true);
 		}
-		if (this.note.card) showCardSettings(this.note.card);
-		
+
 		const indices = (listItemMatch as any).indices;
 		new Setting(this.contentEl)
-			.addButton((btn) => {
+			.addButton(btn => 
 				btn
 					.setButtonText('Dismiss changes')
 					.setCta()
 					.onClick(() => this.close())
-			})
-			.addButton((btn) => {
-				btn
+			)
+			.addButton(btn => 
+				applyChangesButton = btn
 					.setButtonText('Apply changes')
 					.setCta()
 					.onClick(() => {
-						if (this.note.content === "" && !this.note.id) {
-							new Notice("Invalid card");
-							return;
-						}
 						this.close();
-						this.updateData(indices);
+						this.updateData(view, indices, note);
 					})
-			});
+			);
 		return;
 	}
 
 	// indices of noteMatch
-	updateData(indices: number[][]) {
-		const contentEdit = this.view.state.update({
+	updateData(view: EditorView, indices: number[][], note: Note) {
+		const contentEdit = view.state.update({
 			changes: {
 				from: indices[3][0], 
 				to: indices[0][1], 
-				insert: generateNoteString(this.note), 
+				insert: generateNoteString(note)
 			}
 		});
-		this.view.dispatch(contentEdit);
+		view.dispatch(contentEdit);
 	}
 }
 
 class IdSuggestModal extends SuggestModal<ListItem> {
 	callback: (id: string) => void;
 	items: ListItem[];
-	// this.paths: number[][];
 	defaultQuery: string;
-
 	constructor(app: App, view: EditorView, defaultQuery: string, callback: (id: string) => void) {
 		super(app)
 		this.callback = callback;
@@ -511,14 +514,16 @@ class IdSuggestModal extends SuggestModal<ListItem> {
 		// this.paths = [];
 		this.defaultQuery = defaultQuery;
 		
-		const tagRegex = RegExp("(\\t*)(\\d+. |- ).*(#\\w+)", 'd');
-		let lineNumber = 1;
+		const tagRegex = RegExp("(\\t*)(\\d+. |- )(.*?)(#\\w+)", 'd');
 		for (let line of view.state.doc.iterLines()) {
 			const tagMatch = tagRegex.exec(line);
 			if (tagMatch) {
-				this.items.push(parseListItem(tagMatch[2] + tagMatch[3]));
+				this.items.push({
+					content: tagMatch[3].trim(), 
+					type: 'key word', 
+					id: tagMatch[4].slice(1)
+				});
 			}
-			lineNumber++;
 		}
 	}
 
@@ -533,7 +538,7 @@ class IdSuggestModal extends SuggestModal<ListItem> {
 
 	renderSuggestion(item: ListItem, el: HTMLElement): void {
 		el.createEl('div', { text: item.content + " #" + item.id });
-		el.createEl('small', { text: "show path here" });
+		// el.createEl('small', { text: "show path here" });
 	}
 
 	onChooseSuggestion(item: ListItem, evt: MouseEvent | KeyboardEvent): void { 

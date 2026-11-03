@@ -20,7 +20,7 @@ export interface ListItem {
 // }
 
 export interface Note {
-  listIndex: number; // number in list. 0 if unordered list
+  listNumber: number; // number in list. 0 if unordered list
   content: string; // full content in markdown
   type: 'key word' | 'relation' | 'info';
   id: string | undefined; // "" if empty, null to force unlink
@@ -31,10 +31,9 @@ export interface Note {
 // ref stores the index of the lowest level (reference) instance
 export interface NoteGroup {
 	content: string | undefined; // undefined if there is a conflict
-	id: string | undefined; // #<id> #"" or blank
+	id: string | undefined; // #<id> or #"" or blank
 	indices: number[]; // index in note library
 	levels: number[]; 
-	// parentIndex: number | null; // for duplicate relations under the same parent
 	ref: number;
 }
 
@@ -56,5 +55,13 @@ export interface MindMapLayout {
 }
 
 export enum Warning {
-  EmptyLine, Invalid, DuplicateRelation, DuplicateKeyWord, LinkConflict, LinkConflictReference, ContentNotDefined, ContentConflict, StudyConflict
+  EmptyLine, 
+  Invalid, 
+  DuplicateRelation, 
+  DuplicateKeyWord, 
+  LinkConflict, 
+  LinkConflictReference, 
+  ContentNotDefined, 
+  ContentConflict, 
+  StudyConflict
 }

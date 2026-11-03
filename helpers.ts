@@ -140,7 +140,7 @@ export function parseListItem(content: string): ListItem {
 	return result;
 }
 
-export function parseListIndex(str: string): number {
+export function parseListNumber(str: string): number {
 	const parse = parseFloat(str);
 	return isNaN(parse) ? 0 : parse;
 }
@@ -171,7 +171,7 @@ export function parseCard(tag: string): Card | null {
 export function parseNote(match: RegExpExecArray): Note {
 	const note = {} as Note;
 
-	note.listIndex = parseListIndex(match[2]);
+	note.listNumber = parseListNumber(match[2]);
 
 	const { content, id, type } = parseListItem(match[3]);
 	note.content = content;
@@ -228,15 +228,13 @@ export function generateCardString(card: Card, includeTags = true): string {
 }
 
 export function generateNoteString(note: Note): string {
-	// let str = note.listIndex == 0 ? "- " : `${note.listIndex}. `;
+	// let str = note.listNumber == 0 ? "- " : `${note.listNumber}. `;
 	let str = note.content;
 	if (note.id !== undefined) {
 		str += " #" + note.id;
 	}
 	if (note.card) {
 		str += generateCardString(note.card, true);
-	} else {
-		str += cardTagOpen + cardTagClose;
 	}
 	return str;
 }

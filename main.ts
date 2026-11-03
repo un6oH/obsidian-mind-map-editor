@@ -3,7 +3,7 @@ import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { Settings, MindMapLayout, Warning, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
-import { mapTagRegex, generateCardString, toNoteID, parseListIndex, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, generateMapString, errorRegex, errorTagRegex, removeTags, idTagRegex, noteRegex, parseNote, generateNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
+import { mapTagRegex, generateCardString, toNoteID, parseListNumber, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, generateMapString, errorRegex, errorTagRegex, removeTags, idTagRegex, noteRegex, parseNote, generateNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
 import { editorField } from 'state-fields/editor-state-field';
 
@@ -219,7 +219,7 @@ export async function openMindMapView(plugin: MindMapEditorPlugin, editor: Edito
 }
 
 interface NoteList {
-	listIndices: number[]; 
+	listNumbers: number[]; 
 	listItems: ListItem[];
 	lines: number[]; // line number of each note
 	levels: number[]; // indent level of each note
@@ -231,7 +231,7 @@ interface NoteList {
 function processDocument(doc: Editor): NoteList {
 	// note library properties
 	// ensure every valid note is pushed
-	const listIndices: number[] = [];
+	const listNumbers: number[] = [];
 	const items: ListItem[] = [];
 	const lines: number[] = [];
 	const levels: number[] = [];
@@ -250,9 +250,9 @@ function processDocument(doc: Editor): NoteList {
 		// no list item or list item is blank
 		if (!match || match[3].trim() === "") continue;
 
-		// extract list index, content and id
-		let listIndex = parseListIndex(match[2]);
-		listIndices.push(listIndex);
+		// extract list number, content and id
+		let listNumber = parseListNumber(match[2]);
+		listNumbers.push(listNumber);
 		let text = removeTags(match[3]);
 		let item = parseListItem(text);
 		const index = items.push(item) - 1;
@@ -271,11 +271,12 @@ function processDocument(doc: Editor): NoteList {
 		}
 
 		// note is marked with # or is a relation with no specified id; ignore note groups
-		if (item.id === "" || 
-				item.id === undefined && item.type === "relation" || 
-				item.type === "info") 
+		if (item.id === "" || // force unlink
+				item.id === undefined && item.type === "relation" || // relation
+				item.type === "info") // info
 			continue; 
 
+		// creating groups
 		const content = item.content.toLowerCase();
 		if (item.id !== undefined) { // all notes with an info.id tag get linked
 			const groupIndex = groups.findIndex((group) => group.id === item.id);
@@ -290,7 +291,6 @@ function processDocument(doc: Editor): NoteList {
 					levels: [level], 
 					ref: index,
 				});
-				if (content === "assess") console.log(groups.last());
 			} else {
 				// check if there is a content conflict
 				if (content) {
@@ -305,7 +305,6 @@ function processDocument(doc: Editor): NoteList {
 				}
 				groups[groupIndex].indices.push(index);
 				groups[groupIndex].levels.push(level);
-				if (content === "assess") console.log(groups[groupIndex]);
 			}
 		} else {
 			// find group with the same content and is accepting more members
@@ -319,11 +318,9 @@ function processDocument(doc: Editor): NoteList {
 					levels: [level], 
 					ref: index,
 				});
-				if (content === "assess") console.log(groups.last());
 			} else {
 				groups[groupIndex].indices.push(index);
 				groups[groupIndex].levels.push(level);
-				if (content === "assess") console.log(groups[groupIndex]);
 			}
 		}
 	}
@@ -331,7 +328,6 @@ function processDocument(doc: Editor): NoteList {
 	// reprocess groups
 	for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
 		const group = groups[groupIndex];
-
 
 		if (group.indices.length == 1) {
 			// check if the group does not have a label
@@ -349,7 +345,7 @@ function processDocument(doc: Editor): NoteList {
 			const index = group.indices[i];
 			const level = group.levels[i];
 			if (levels[index + 1] > level || 
-					levels[index + 1] == level && listIndices[index + 1] == listIndices[index] + 1) {
+					levels[index + 1] == level && listNumbers[index + 1] == listNumbers[index] + 1) {
 				parents.push(index);
 				groups[groupIndex].ref = index;
 			}
@@ -391,8 +387,7 @@ function processDocument(doc: Editor): NoteList {
 		}
 	}
 
-	// console.log("processNotes() groups:", groups);
-	return {listIndices, listItems: items, lines, levels, groups, warningLines, warnings};
+	return {listNumbers, listItems: items, lines, levels, groups, warningLines, warnings};
 }
 
 function proofreadNotes(editor: Editor, library: NoteList) {
@@ -440,6 +435,7 @@ export function createCards(editor: Editor) {
 	const noteList = processDocument(doc);
 	if (noteList.warningLines.length != 0) {
 		new Notice("Unresolved warnings - fix notes");
+		console.log(noteList.warnings);
 		proofreadNotes(editor, noteList);
 		return;
 	}
@@ -479,7 +475,7 @@ export function createCards(editor: Editor) {
 			const listItemMatch = listItemRegex.exec(line);
 			if (!listItemMatch) continue;
 			const { content, id, type } = parseListItem(listItemMatch[3]);
-			const note: Note = { listIndex: 0, content, id, type, card: null };
+			const note: Note = { listNumber: 0, content, id, type, card: null };
 			// replace id or add card
 			let replace = false;
 			if (id !== item.id) {

@@ -28,7 +28,7 @@ interface Node extends d3.SimulationNodeDatum {
   collideRadius: number;
   level: number;
   cardOriginIndex: number, 
-  listIndex: number;
+  listNumber: number;
   study: boolean;
   centre: boolean;
   links: number[]; // indices of links to this node
@@ -359,7 +359,7 @@ export class MindMapView extends ItemView {
         collideRadius: Math.sqrt(this.mindMap.map.title.length), 
         level: 0,
         cardOriginIndex: -1, 
-        listIndex: 0, 
+        listNumber: 0, 
         study: false, 
         centre: true, 
         links: [], 
@@ -402,8 +402,8 @@ export class MindMapView extends ItemView {
       }
 
       // find chains
-      const listIndex = note.listIndex;
-      if (listIndex == 0) {
+      const listNumber = note.listNumber;
+      if (listNumber == 0) {
         nodeIndex++;
         continue;
       }
@@ -426,13 +426,13 @@ export class MindMapView extends ItemView {
       // console.log("loadMindMap() parent:", parent, id);
       const chainIndex = chains.findIndex((chain) => chain.origin === parent);
       if (chainIndex != -1) {
-        chains[chainIndex].nodes[listIndex - 1] = id; // assign chain
+        chains[chainIndex].nodes[listNumber - 1] = id; // assign chain
       } else {
         let i = chains.push({
           origin: parent, 
           nodes: []
         });
-        chains[i - 1].nodes[listIndex - 1] = id;
+        chains[i - 1].nodes[listNumber - 1] = id;
       }
 
       nodeIndex++;
@@ -475,12 +475,12 @@ export class MindMapView extends ItemView {
 
       const level = path.length - 1;
       const study = note.card;
-      const listIndex = note.listIndex;
+      const listNumber = note.listNumber;
       let source = path.length == 1 ? centreNode!.id : path.slice(0, -1).join('-');
       const origin = source;
-      if (listIndex > 1) { // node in a chain
+      if (listNumber > 1) { // node in a chain
         let chainIndex = chains.findIndex((group) => group.origin === source);
-        source = chains[chainIndex].nodes[listIndex - 2];
+        source = chains[chainIndex].nodes[listNumber - 2];
       }
 
       // console.log("loadMindMap()", newNode);
@@ -495,7 +495,7 @@ export class MindMapView extends ItemView {
           collideRadius: collideRadius(note.content), 
           level, 
           cardOriginIndex: -1, 
-          listIndex, 
+          listNumber, 
           study: note.card ? true : false, 
           centre: false, 
           links: [], 
@@ -523,7 +523,7 @@ export class MindMapView extends ItemView {
         cardOriginIndex: 0, 
         target: nodeId, 
         targetIndex: 0, 
-        level: listIndex > 1 ? level : level - 1, 
+        level: listNumber > 1 ? level : level - 1, 
         card: note.card, 
         reviewed: study ? note.card!.due > now : true, 
       });
@@ -553,7 +553,7 @@ export class MindMapView extends ItemView {
 
       this.links[i].sourceIndex = sourceNode.index;
       this.links[i].targetIndex = targetNode.index;
-      this.links[i].cardOriginIndex = targetNode.listIndex ? targetNode.cardOriginIndex : sourceNode.index;
+      this.links[i].cardOriginIndex = targetNode.listNumber ? targetNode.cardOriginIndex : sourceNode.index;
       this.nodes[sourceNode.index].links.push(i);
       if (this.links[i].card) this.nodes[sourceNode.index].hasStudyableChildren = true;
     }
@@ -1167,7 +1167,7 @@ export class MindMapView extends ItemView {
       a.level < b.level ?
         -1 :
         a.level == b.level ?
-          a.listIndex - b.listIndex :
+          a.listNumber - b.listNumber :
           1
     );
     // console.log("goToNextNode() all nodes:", nodes);
