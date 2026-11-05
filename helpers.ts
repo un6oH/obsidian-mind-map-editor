@@ -2,7 +2,7 @@ import { generatorParameters, createEmptyCard, FSRSParameters, Card, State } fro
 import { Note, MindMap, MapSettings, ListItem } from "types";
 import { interpolateRainbow, style } from "d3";
 
-export const listItemPattern = "(\\t*)(\\d+\\. |- )(.+)(\\s*?)";
+export const listItemPattern = "(\\t*)(\\d+\\. |- )(.+)";
 export const listItemRegex = RegExp(listItemPattern, 'd');
 
 export const cardTagOpen = "%%card";

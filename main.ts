@@ -5,7 +5,7 @@ import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { Settings, MindMapLayout, Warning, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
 import { mapTagRegex, generateCardString, toNoteID, parseListNumber, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, generateMapString, errorRegex, errorTagRegex, removeTags, idTagRegex, noteRegex, parseNote, generateNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
 import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
-import { editorField } from 'state-fields/editor-state-field';
+import { mindMapTrees, mindMapTreeUpdateEffect } from 'state-fields/mind-map-tree-state-field';
 
 const DEFAULT_SETTINGS = {
 	layouts: [], 
@@ -14,7 +14,6 @@ const DEFAULT_SETTINGS = {
 export default class MindMapEditorPlugin extends Plugin {
 	settings: Settings = {} as Settings;
 	mindMapView: MindMapView = {} as MindMapView;
-	currentMindMapTitle: string = "";
 
 	async onload() {
 		console.log("plugin loaded.");
@@ -30,6 +29,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		
 		// 	const editor = activeView!.editor;35
 		this.registerEditorExtension([createMindMapEditorViewPlugin(this, () => this.checkNotes(), () => this.createCards(), () => this.openStudyMindMapModal())]);
+		// this.registerEditorExtension([mindMapTrees]);
 
 		this.registerView(
 			VIEW_TYPE_MIND_MAP, 
@@ -42,7 +42,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		proofreadNotesStatusBarItem.onclick = () => {
 			const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 			const library = processDocument(activeView!.editor);
-			proofreadNotes(activeView!.editor, library);
+			addErrorTags(activeView!.editor, library);
 			// new ProofreadNotesModal(this.app, activeView!.editor, library.warningLines, library.warnings).open();
 		};
 
@@ -66,19 +66,19 @@ export default class MindMapEditorPlugin extends Plugin {
 		});
 
 		// analyses the selected map for nodes to add or update
-		this.addCommand({
-			id: 'mindmapeditor-update-notes', 
-			name: 'Update notes', 
-			hotkeys: [{ modifiers: ['Ctrl', 'Shift'], key: 'u' }],
-			editorCallback: (editor: Editor) => {
-				this.currentMindMapTitle = isMindMap(editor);
-				if (this.currentMindMapTitle !== "") {
-					new UpdateNotesModal(this.app, editor).open();
-				} else {
-					new Notice("This document is not a mind map!");
-				}
-			}
-		});
+		// this.addCommand({
+		// 	id: 'mindmapeditor-update-notes', 
+		// 	name: 'Update notes', 
+		// 	hotkeys: [{ modifiers: ['Ctrl', 'Shift'], key: 'u' }],
+		// 	editorCallback: (editor: Editor) => {
+		// 		this.currentMindMapTitle = isMindMap(editor);
+		// 		if (this.currentMindMapTitle !== "") {
+		// 			new UpdateNotesModal(this.app, editor).open();
+		// 		} else {
+		// 			new Notice("This document is not a mind map!");
+		// 		}
+		// 	}
+		// });
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		// this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
@@ -129,10 +129,11 @@ export default class MindMapEditorPlugin extends Plugin {
 		const library = processDocument(view.editor.getDoc());
 		if (library.warningLines.length != 0) {
 			new Notice("Unresolved warnings - fix notes");
-			proofreadNotes(view.editor, library);
+			addErrorTags(view.editor, library);
 			return false;
 		} else {
 			new Notice("No errors");
+			dismissWarnings(view.editor)
 			return true;
 		}
 	}
@@ -229,6 +230,7 @@ interface NoteList {
 }
 
 function processDocument(doc: Editor): NoteList {
+	
 	// note library properties
 	// ensure every valid note is pushed
 	const listNumbers: number[] = [];
@@ -260,15 +262,6 @@ function processDocument(doc: Editor): NoteList {
 
 		const level = match[1].length;
 		levels.push(level);
-
-		const study = canStudy(item.content, item.type);
-		const cardMatch = cardTagRegex.exec(match[3]);
-		if (cardMatch) {
-			if (study != (cardMatch[1] === "")) {
-				warningLines.push(l);
-				warnings.push(Warning.StudyConflict);
-			}
-		}
 
 		// note is marked with # or is a relation with no specified id; ignore note groups
 		if (item.id === "" || // force unlink
@@ -390,7 +383,7 @@ function processDocument(doc: Editor): NoteList {
 	return {listNumbers, listItems: items, lines, levels, groups, warningLines, warnings};
 }
 
-function proofreadNotes(editor: Editor, library: NoteList) {
+function addErrorTags(editor: Editor, library: NoteList) {
 	dismissWarnings(editor);
 
 	new Notice(`${library.warningLines.length} error(s) found.`);
@@ -403,6 +396,7 @@ function proofreadNotes(editor: Editor, library: NoteList) {
 			`${errorTagOpen}${warning}${errorTagClose}`, 
 			{ line: lineNumber, ch: text.length }
 		);
+		
 	}
 }
 
@@ -418,9 +412,10 @@ export function dismissWarnings(editor: Editor) {
 
 		const indices: number[][] = (match as any).indices;
 		const start = indices[1][0];
-		const end = indices[1][2];
+		const end = indices[1][1];
 
-		editor.replaceRange("", 
+		editor.replaceRange(
+			"", 
 			{ line: l, ch: start },
 			{ line: l, ch: end }
 		);
@@ -436,7 +431,7 @@ export function createCards(editor: Editor) {
 	if (noteList.warningLines.length != 0) {
 		new Notice("Unresolved warnings - fix notes");
 		console.log(noteList.warnings);
-		proofreadNotes(editor, noteList);
+		addErrorTags(editor, noteList);
 		return;
 	}
 

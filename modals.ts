@@ -2,7 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { App, ButtonComponent, Editor, Modal, Notice, Plugin, Setting, SuggestModal, TextComponent, ToggleComponent } from 'obsidian';
 import { Card, createEmptyCard, FSRSParameters, generatorParameters, State } from 'ts-fsrs';
 import { ListItem, MapSettings, MindMap, Note, Warning } from 'types';
-import { notePattern, parseNote, parseNumberArray, parseMapTag, toNoteID, generateMapString, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, generateNoteString, listItemRegex } from 'helpers';
+import { notePattern, parseNote, parseNumberArray, parseMapTag, toNoteID, generateMapString, errorPattern, mapTagOpen, mapTagClose, noteRegex, idTagRegex, parseListItem, canStudy, generateNoteString } from 'helpers';
 import MindMapEditorPlugin, { dismissWarnings, openMindMapView, updateMapSettings, createCards } from 'main';
 
 export class MindMapCreatorModal extends Modal {
