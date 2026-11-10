@@ -1,8 +1,8 @@
-import { App, ItemView, Modal, Notice, SliderComponent, View, WorkspaceLeaf } from 'obsidian';
-import { Note, MindMap, MindMapLayout, NoteGroup } from 'types';
-import { colour, cardStateColours, formatContent } from 'helpers';
+import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
+import { MindMap, MindMapLayout, NoteGroup } from 'types';
+import { colour, formatContent } from 'helpers';
 import * as d3 from 'd3';
-import { Card, fsrs, FSRS, generatorParameters, Grade, Grades, IPreview, Rating, RecordLog, show_diff_message, State } from 'ts-fsrs';
+import { Card, fsrs, FSRS, Grade, Grades, IPreview, Rating, show_diff_message } from 'ts-fsrs';
 
 export const VIEW_TYPE_MIND_MAP = 'mind-map-view';
 const MIN_ALPHA = 0.005;
@@ -21,34 +21,36 @@ const STROKE_DASHARRAYS = [
 ];
 
 interface Node extends d3.SimulationNodeDatum {
-  id: string;
-  index: number;
-  content: Element;
-  hidden: Element;
-  collideRadius: number;
-  level: number;
-  cardOriginIndex: number, 
-  listNumber: number;
-  study: boolean;
-  centre: boolean;
-  links: number[]; // indices of links to this node
-  hasStudyableChildren: boolean;
+  id: string; // path in root\parent\self format 
+  index: number; // 0-based index assigned by forceS
+  content: Element; // display for viewing or revealed answer
+  hidden: Element; // display for hidden answer
+  collideRadius: number; // radius to allow space for text
+  level: number; // level in list hierarchy. 0 if root
+  // cardOriginIndex: number, // deprecated
+  listNumber: number; // number in ordered list. 0 if unordered
+  // study: boolean; // deprecated
+  // centre: boolean; // deprecated
+  // links: number[]; // deprecated
+  linksTo: number[]; // indices of links to this node
+  linksFrom: number[]; // indices of links from this node
+  // hasStudyableChildren: boolean; // deprecated
 }
 
 interface Link extends d3.SimulationLinkDatum<Node> {
   index: number;
   source: string | Node;
-  sourceIndex: number;
-  cardOriginIndex: number;
+  // sourceIndex: number; // deprecated. use source.index
   target: string | Node;
-  targetIndex: number;
-  level: number;
+  // targetIndex: number; // deprecated. use target.index
+  level: number; // level in list hierarchy. 0 if root
+  parent: string | Node; // reference to parent note
   card: Card | null;
   reviewed: boolean; // true if no card
 }
 
 interface Chain {
-  origin: string; // id of parent
+  parent: string; // id of parent
   nodes: string[] // array of nodes in the chain
 }
 
@@ -70,16 +72,22 @@ interface Transform {
 }
 
 export class MindMapView extends ItemView {
+  // mind map
   mindMap: MindMap = {} as MindMap;
   nodes: Node[] = [];
   links: Link[] = [];
-  interactableNodes: number[] = [];
-  interactableLinks: number[] = [];
+  selectedParent: Node | null = null;
+  interactableNodes: Node[] = [];
+  interactableLinks: Link[] = [];
   
+  // spaced repetition
   fsrs: FSRS = {} as FSRS;
   now: Date = new Date();
   cardPreview: IPreview = {} as IPreview;
+  selectedNode: Node | null = null;
+  selectedLink: Link | null = null;
 
+  // force directed graph
   graphContainer: Element = {} as Element;
   simulation: d3.Simulation<Node, Link> = {} as d3.Simulation<Node, Link>;
   svg: d3.Selection<SVGSVGElement, unknown, null, undefined> = {} as d3.Selection<SVGSVGElement, unknown, null, undefined>;
@@ -88,6 +96,8 @@ export class MindMapView extends ItemView {
   node: d3.Selection<SVGCircleElement, Node, SVGGElement, unknown> = {} as d3.Selection<SVGCircleElement, Node, SVGGElement, unknown>;
   label: d3.Selection<SVGTextElement, Node, SVGElement, unknown> = {} as d3.Selection<SVGTextElement, Node, SVGElement, unknown>;
   zoom: d3.ZoomBehavior<SVGSVGElement, unknown> = {} as d3.ZoomBehavior<SVGSVGElement, unknown>;
+  
+  // graph interaction
   ratingInterfaceAnchor: HTMLElement = {} as HTMLElement;
   ratingInterface: HTMLElement = {} as HTMLElement;
   ratingInterfaceOffset = 0; // amount to lower interface to show the content
@@ -96,13 +106,9 @@ export class MindMapView extends ItemView {
   labelContainer: HTMLElement = {} as HTMLElement;
   labelAnchors: HTMLElement[] = [];
 
+  // styling
   width = 480;
   height = 360;
-  marginTop = 20;
-  marginRight = 20;
-  marginBottom = 30;
-  marginLeft = 40;
-  stepsToAnneal: number = 0;
   minFontSize = 14;
   maxFontScale = 1.5;
   transform: Transform = {
@@ -110,9 +116,6 @@ export class MindMapView extends ItemView {
     y: 0, 
     k: 1, 
   };
-  viewStretch = 1;
-
-  settingsContainer: Element = {} as Element;
 
   studyButton: Element = {} as Element;
   studyButtonHandler: () => void = () => {};
@@ -132,7 +135,6 @@ export class MindMapView extends ItemView {
   createGraphButton: Element = {} as Element;
   createGraphButtonHandler = () => this.createGraph();
 
-  currentParent: number = 0;
   nextNodeButton: Element = {} as Element;
   nextNodeButtonHandler = () => {};
 
@@ -140,8 +142,6 @@ export class MindMapView extends ItemView {
   toggleLabelButton: Element = {} as Element;
   toggleLabelButtonHandler = () => this.toggleLabels();
 
-  selectedNode: number | null = null;
-  selectedLinkIndex: number | null = null;
 
   layout: MindMapLayout = {} as MindMapLayout;
   saveProgressCallback = () => {};
@@ -164,8 +164,6 @@ export class MindMapView extends ItemView {
   async onOpen() {
     this.graphContainer = document.createElement('div');
     this.graphContainer.addClass('mind-map-view-graph-container');
-    this.settingsContainer = document.createElement('div');
-    this.settingsContainer.addClass('mind-map-view-settings-container');
 
     this.studyButton = document.createElement('button');
     this.studyButton.textContent = "Study";
@@ -226,7 +224,6 @@ export class MindMapView extends ItemView {
     container.addClass('mind-map-view-container');
     container.empty();
     container.appendChild(this.graphContainer);
-    container.appendChild(this.settingsContainer);
     
     // (container as HTMLElement).focus();
 
@@ -358,12 +355,9 @@ export class MindMapView extends ItemView {
         hidden: content, 
         collideRadius: Math.sqrt(this.mindMap.map.title.length), 
         level: 0,
-        cardOriginIndex: -1, 
         listNumber: 0, 
-        study: false, 
-        centre: true, 
-        links: [], 
-        hasStudyableChildren: false, 
+        linksTo: [], 
+        linksFrom: [], 
         x: 0, 
         y: 0, 
         fx: 0, 
@@ -424,12 +418,12 @@ export class MindMapView extends ItemView {
 
       // add to chain array
       // console.log("loadMindMap() parent:", parent, id);
-      const chainIndex = chains.findIndex((chain) => chain.origin === parent);
+      const chainIndex = chains.findIndex((chain) => chain.parent === parent);
       if (chainIndex != -1) {
         chains[chainIndex].nodes[listNumber - 1] = id; // assign chain
       } else {
         let i = chains.push({
-          origin: parent, 
+          parent: parent, 
           nodes: []
         });
         chains[i - 1].nodes[listNumber - 1] = id;
@@ -479,7 +473,7 @@ export class MindMapView extends ItemView {
       let source = path.length == 1 ? centreNode!.id : path.slice(0, -1).join('-');
       const origin = source;
       if (listNumber > 1) { // node in a chain
-        let chainIndex = chains.findIndex((group) => group.origin === source);
+        let chainIndex = chains.findIndex((group) => group.parent === source);
         source = chains[chainIndex].nodes[listNumber - 2];
       }
 
@@ -494,12 +488,9 @@ export class MindMapView extends ItemView {
           hidden,
           collideRadius: collideRadius(note.content), 
           level, 
-          cardOriginIndex: -1, 
           listNumber, 
-          study: note.card ? true : false, 
-          centre: false, 
-          links: [], 
-          hasStudyableChildren: false, 
+          linksTo: [], 
+          linksFrom: [], 
         };
         if (presetLayout) {
           const index = layout.ids.findIndex((value) => value === nodeId);
@@ -519,10 +510,10 @@ export class MindMapView extends ItemView {
       this.links.push({
         index: linkIndex, 
         source, 
-        sourceIndex: 0, 
-        cardOriginIndex: 0, 
+        // sourceIndex: 0, 
+        parent: source, 
         target: nodeId, 
-        targetIndex: 0, 
+        // targetIndex: 0, 
         level: listNumber > 1 ? level : level - 1, 
         card: note.card, 
         reviewed: study ? note.card!.due > now : true, 
@@ -537,7 +528,6 @@ export class MindMapView extends ItemView {
           console.log("loadMindMap() node origin not found:", id, this.nodes.findIndex((node) => node.id === id));
           return;
         }
-        this.nodes[i].cardOriginIndex = nodeIndex;
       }
     });
 
@@ -551,11 +541,11 @@ export class MindMapView extends ItemView {
         continue;
       }
 
-      this.links[i].sourceIndex = sourceNode.index;
-      this.links[i].targetIndex = targetNode.index;
-      this.links[i].cardOriginIndex = targetNode.listNumber ? targetNode.cardOriginIndex : sourceNode.index;
-      this.nodes[sourceNode.index].links.push(i);
-      if (this.links[i].card) this.nodes[sourceNode.index].hasStudyableChildren = true;
+      // this.links[i].sourceIndex = sourceNode.index;
+      // this.links[i].targetIndex = targetNode.index;
+      // this.links[i].cardOrigin = targetNode.listNumber ? targetNode.cardOriginIndex : sourceNode.index;
+      this.nodes[sourceNode.index].linksTo.push(i);
+      // if (this.links[i].card) this.nodes[sourceNode.index].hasStudyableChildren = true;
     }
 
     // console.log(this.nodes);
@@ -625,22 +615,22 @@ export class MindMapView extends ItemView {
       .call(d3.drag<SVGCircleElement, Node>()
         .on('start', (event, d) => {
             if (this.viewMode != ViewMode.Arrange) return;
-            if (d.centre) return;
+            if (d.level == 0) return;
             if (!event.active) this.simulation.alpha(DRAG_ALPHA).alphaDecay(0).restart();
             d.fx = d.x ? d.x : null;
             d.fy = d.y ? d.y : null;
         })
         .on('drag', (event, d) => {
             if (this.viewMode != ViewMode.Arrange) return;
-            if (d.centre) return;
+            if (d.level == 0) return;
             const k = this.transform.k;
             d.fx = d.x! + event.dx / k / xStretch;
             d.fy = d.y! + event.dy / k;
         })
         .on('end', (event, d) => {
             if (!event.active) this.simulation.alphaTarget(0).alphaDecay(DRAG_ALPHADECAY);
-            d.fx = d.centre ? 0 : null;
-            d.fy = d.centre ? 0 : null;
+            d.fx = d.level == 0 ? 0 : null;
+            d.fy = d.level == 0 ? 0 : null;
         })
       );
 
@@ -689,7 +679,7 @@ export class MindMapView extends ItemView {
       case ViewMode.Study:
         if (!this.selectedNode) {
           console.log("handleNodeClick() Study");
-          if (!this.interactableNodes.contains(node.index)) {
+          if (!this.interactableNodes.contains(node)) {
             console.log("studyNodeInteract() node not interactable");
             break;
           }
@@ -701,22 +691,21 @@ export class MindMapView extends ItemView {
 
   studyNodeInteract(event: any, node: Node) {
     this.now = new Date();
-    const linkIndex = this.interactableLinks.find((i) => this.links[i].targetIndex == node.index);
-    if (linkIndex === undefined) {
-      console.log("studyNodeInteract() error: link does not exist. interactable:", this.interactableLinks.map(i => this.links[i]), "index:", node.index);
+    const link = this.interactableLinks.find(link => link.target == node);
+    if (link === undefined) {
+      console.log("studyNodeInteract() error: link does not exist. interactable:", this.interactableLinks, "node:", node);
       return;
     }
-    const link = this.links[linkIndex];
     const card = link.card;
     if (!card) {
       console.log("studyNodeInteract() error: card does not exist.");
       return;
     }
-    this.selectedLinkIndex = linkIndex;
+    this.selectedLink = link;
     this.cardPreview = this.fsrs.repeat(card, this.now);
-    this.selectedNode = node.index;
-    this.interactableNodes.remove(node.index);
-    this.interactableLinks.remove(linkIndex);
+    this.selectedNode = node;
+    this.interactableNodes.remove(node);
+    this.interactableLinks.remove(link);
 
     const nodeSvg = this.node.filter((_, i) => i == node.index);
     nodeSvg.attr('stroke-width', 0);
@@ -744,19 +733,18 @@ export class MindMapView extends ItemView {
 
   deselect() {
     this.selectedNode = null;
-    this.selectedLinkIndex = null;
+    this.selectedLink = null;
     this.ratingInterface.hide();
   }
 
   handleRatingInput(grade: Grade) {
-    this.links[this.selectedLinkIndex!].card = this.cardPreview[grade].card;
+    this.selectedLink!.card = this.cardPreview[grade].card;
     // console.log(`handleRatingInput() ${this.links[this.selectedLinkIndex!].source} -> ${this.links[this.selectedLinkIndex!].target}; new card:`, this.links[this.selectedLinkIndex!].card);
     console.log(
       "handleRatingInput() studied:", 
-      this.links[this.selectedLinkIndex!].source, "->", this.links[this.selectedLinkIndex!].target, 
-      "rating:", grade, "\n", 
-      "new card:", 
-      this.links[this.selectedLinkIndex!].card
+      this.selectedLink!.source, "->", this.selectedLink!.target, 
+      "rating:", grade,
+      "new card:", this.selectedLink!.card
     );
     this.deselect();
     if (this.interactableNodes.length == 0) this.goToNextNode();
@@ -845,7 +833,7 @@ export class MindMapView extends ItemView {
       // .attr("stroke-width", 2 / k);
 
     if (this.selectedNode) {
-      const nodePosition = [this.nodes[this.selectedNode].x!, this.nodes[this.selectedNode].y!];
+      const nodePosition = [this.selectedNode.x!, this.selectedNode.y!];
       this.ratingInterfaceAnchor.style.left = (this.width / 2 + (nodePosition[0] * xStretch * k + x)).toString() + "px";
       this.ratingInterfaceAnchor.style.top = (this.height / 2 + nodePosition[1] * k + y + this.ratingInterfaceOffset).toString() + "px";
     }
@@ -889,38 +877,38 @@ export class MindMapView extends ItemView {
     return nodes;
   }
 
-  getRelatedNodes(index: number, backDepth: number, forwardDepth: number): number[] {
-    let indices: number[] = []; // final list of indices
-    let parentIndices: number[] = [index]; // index of parent nodes, parents of parents, to back depth
-    let childIndices: number[] = [index]; // index of child nodes, children of children, to forward depth
+  getRelatedNodes(node: Node, backDepth: number, forwardDepth: number): Node[] {
+    let nodes: Node[] = []; // final list of nodes
+    let parents: Node[] = [node]; // parent nodes, parents of parents, to back depth
+    let children: Node[] = [node]; // child nodes, children of children, to forward depth
 
     let startIndex = 0; // start of index list to branch from
     let newIndex = 0;
     for (let d = 0; d < backDepth; d++) {
-      newIndex = parentIndices.length; 
-      parentIndices.slice(startIndex).forEach((i) => {
-        const links = this.links.filter((link) => link.targetIndex == i || this.nodes[i].cardOriginIndex == link.sourceIndex);
-        parentIndices.push(...links.map((link) => link.sourceIndex));
+      newIndex = parents.length; 
+      parents.slice(startIndex).forEach(node => {
+        const linksToNode = this.links.filter(link => link.target == node);
+        const parentNodes = linksToNode.map(link => link.parent as Node);
+        parents.push(...parentNodes);
       });
-      startIndex = newIndex; // start from the new nodes next iteration
     }
     startIndex = 0;
     for (let d = 0; d < forwardDepth; d++) {
-      newIndex = childIndices.length;
-      childIndices.slice(startIndex).forEach((i) => {
-        const links = this.links.filter((link) => link.sourceIndex == i || this.nodes[link.targetIndex].cardOriginIndex == i);
-        childIndices.push(...links.map((link) => link.targetIndex));
+      newIndex = children.length;
+      children.slice(startIndex).forEach((node) => {
+        const linksFromNode = this.links.filter(link => link.source == node || link.parent == node);
+        children.push(...linksFromNode.map(link => link.target as Node));
       });
       startIndex = newIndex; // start from the new nodes next iteration
     }
-    parentIndices.forEach((i) => {
-      if (!indices.contains(i)) indices.push(i);
+    parents.forEach(node => {
+      if (!nodes.contains(node)) nodes.push(node);
     });
-    childIndices.forEach((i) => {
-      if (!indices.contains(i)) indices.push(i);
+    children.forEach(node => {
+      if (!nodes.contains(node)) nodes.push(node);
     });
     // console.log("getNodeIndices() nodes:", indices.map(index => this.nodes[index]));
-    return indices;
+    return nodes;
   }
 
   focusNodes(node?: Node, backDepth?: number, forwardDepth?: number) {
@@ -930,9 +918,8 @@ export class MindMapView extends ItemView {
     forwardDepth = forwardDepth ? forwardDepth : (backDepth ? backDepth : 0);
 
     if (node) {
-      indices = this.getRelatedNodes(node.index, backDepth, forwardDepth);
-      nodes = this.nodes.filter(node => indices.contains(node.index));
-      this.updateVisibility(indices);
+      nodes = this.getRelatedNodes(node, backDepth, forwardDepth);
+      this.updateVisibility(nodes);
     } else {
       nodes = this.nodes;
       this.updateVisibility();
@@ -969,8 +956,8 @@ export class MindMapView extends ItemView {
     }
   }
 
-  updateVisibility(nodeIndices?: number[]) {
-    if (!nodeIndices) {
+  updateVisibility(nodes?: Node[]) {
+    if (!nodes) {
       this.node.attr('opacity', "100%");
       this.link.attr('opacity', "100%");
       this.labels.forEach(label => {
@@ -981,20 +968,20 @@ export class MindMapView extends ItemView {
     }
 
     if (this.viewMode == ViewMode.Navigate) {
-      this.node.attr('opacity', d => nodeIndices.contains(d.index) ? "100%" : "25%");
+      this.node.attr('opacity', d => nodes.contains(d) ? "100%" : "25%");
       this.link.attr('opacity', d => {
-        const containsTarget = nodeIndices.contains(d.targetIndex);
-        const containsSource = nodeIndices.contains(d.sourceIndex);
+        const containsTarget = nodes.contains(d.target as Node);
+        const containsSource = nodes.contains(d.source as Node);
         return containsTarget && containsSource ? "100%" : "25%";
       });
       this.labels.forEach((label, i) => {
-        label.style.opacity = nodeIndices.contains(i) ? "100%" : "25%";
+        label.style.opacity = nodes.some(node => node.index == i) ? "100%" : "25%";
         if (this.showLabels) label.show();
       });
     } else if (this.viewMode == ViewMode.Study) {
       this.node.attr('opacity', d => {
-        if (nodeIndices.contains(d.index)) {
-          if (this.interactableNodes.contains(d.index) || nodeIndices[0] == d.index) {
+        if (nodes.contains(d)) {
+          if (this.interactableNodes.contains(d) || nodes[0] == d) {
             return "100%";
           } else {
             return "50%";
@@ -1004,10 +991,10 @@ export class MindMapView extends ItemView {
         }
       });
       this.link.attr('opacity', d => {
-        const containsTarget = nodeIndices.contains(d.targetIndex);
-        const containsSource = nodeIndices.contains(d.sourceIndex);
+        const containsTarget = nodes.contains(d.target as Node);
+        const containsSource = nodes.contains(d.source as Node);
         if (containsTarget && containsSource) {
-          if (this.interactableLinks.contains(d.index)) {
+          if (this.interactableLinks.contains(d)) {
             return "100%";
           } else {
             return "50%";
@@ -1018,9 +1005,9 @@ export class MindMapView extends ItemView {
       });
       this.labels.forEach((label, i) => {
         let opacity = "";
-        if (nodeIndices.contains(i)) {
+        if (nodes.some(node => node.index == i)) {
           if (this.showLabels) label.show();
-          if (this.interactableNodes.contains(i) || nodeIndices[0] == i) { // node can be clicked or is the parent
+          if (nodes.some(node => node.index == i) || nodes[0] == this.nodes[i]) { // node can be clicked or is the parent
             opacity = "100%";
           } else { // node can not be clicked
             opacity = "75%";
@@ -1077,12 +1064,12 @@ export class MindMapView extends ItemView {
     if (this.viewMode == ViewMode.Study) {
       const hiddenNodes = new Array(this.nodes.length).fill(false);
       this.links.forEach(link => {
-        if (!link.reviewed) hiddenNodes[link.targetIndex] = true;
+        if (!link.reviewed) hiddenNodes[(link.target as Node).index] = true;
       });
       this.labels.forEach((label, i) => {
         const node = this.nodes[i];
         const text = hiddenNodes[i] ? node.hidden : node.content;
-        label.replaceChildren(hiddenNodes[i] ? node.hidden : node.content);
+        label.replaceChildren(text);
       });
     } else {
       this.labels.forEach((label, i) => label.replaceChildren(this.nodes[i].content));
@@ -1118,18 +1105,16 @@ export class MindMapView extends ItemView {
     }
   }
 
-  // sets interactable nodes to ones that are studyable
-  setInteractable(cardOriginIndex: number) {
-    const indices = this.getRelatedNodes(cardOriginIndex, 0, 1);
-    indices.shift();
-    const links = this.links.filter(link => link.card).filter(link => link.cardOriginIndex == cardOriginIndex).filter(link => indices.contains(link.targetIndex));
+  // sets interactable nodes and links
+  setInteractable(parent: Node) {
+    const nodes = this.getRelatedNodes(parent, 0, 1); // select immediate children
+    nodes.shift(); // only children
+    const links = this.links.filter(link => link.card) // has card
+                            .filter(link => link.parent == parent) // card is from the parent
+                            .filter(link => !link.reviewed); // not reviewed yet
     // console.log("setInteractable(): links:", links.map(link => link));
-    this.interactableNodes = links.filter(link => !link.reviewed).map(link => link.targetIndex);
-    this.interactableLinks = links.map(link => link.index);
-    const interactable = this.node.filter((d, i) => this.interactableNodes.contains(i));
-    // console.log('setInteractable(): interactable nodes:', this.interactableNodes.map(index => this.nodes[index]));
-    // interactable.attr('stroke-width', 2 / this.transform.k);
-    // interactable.attr('stroke-width', 1);
+    this.interactableNodes = links.map(link => link.target as Node);
+    this.interactableLinks = links;
   }
 
   updateDue() {
@@ -1143,18 +1128,9 @@ export class MindMapView extends ItemView {
 
   goToNextNode() {
     this.updateDue();
-    const nodes = this.nodes.filter((node) => {
-      if (!node.hasStudyableChildren) return false;
-      // all links with this node as the origin
-      const links = this.links
-        .filter(link => link.cardOriginIndex == node.index)
-        .filter(link => link.card);
-      // console.log("goToNextNode() node:", node.content, "links:", links);
-      for (let link of links) {
-        if (!link.reviewed) return true;
-      }
-      return false;
-    });
+    const linksDue = this.links.filter(link => link.card && !link.reviewed); // links with unreviewed cards
+    const nodes = linksDue.map(link => link.target as Node);
+
     if (nodes.length == 0) {
       new Notice("No notes due", 0);
       console.log("no notes due");
@@ -1163,19 +1139,13 @@ export class MindMapView extends ItemView {
       this.interactableLinks = [];
       return;
     }
-    nodes.sort((a, b) => 
-      a.level < b.level ?
-        -1 :
-        a.level == b.level ?
-          a.listNumber - b.listNumber :
-          1
-    );
-    // console.log("goToNextNode() all nodes:", nodes);
-    const index = nodes[0].index;
-    this.currentParent = index;
-    this.setInteractable(index);
-    this.focusNodes(this.nodes[index], 2, 1);
-    console.log("goToNextNode() node:", this.nodes[index].id);
+
+    linksDue.sort((a, b) => a.level - b.level);
+    const parent = linksDue[0].parent as Node;
+    this.selectedParent = parent;
+    this.setInteractable(parent);
+    this.focusNodes(parent, 1, 1);
+    console.log("goToNextNode() parent:", parent);
   }
 
   viewImage(url: string) {
@@ -1184,7 +1154,7 @@ export class MindMapView extends ItemView {
 }
 
 function nodeRadius (node: Node) { 
-  if (node.centre) {
+  if (node.level == 0) {
     return 18;
   } else {
     return 12 + 6 / (node.level + 1);
@@ -1204,7 +1174,7 @@ function nodeFill(mode: ViewMode, node: Node, linkArray: Link[]): string {
   // } else {
   //   return node.centre ? 'white' : colour(node.level);
   // }
-  return node.centre ? 'white' : colour(node.level);
+  return node.level == 0 ? 'white' : colour(node.level);
 }
 
 function linkStroke(mode: ViewMode, link: Link): string {

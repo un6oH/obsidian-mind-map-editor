@@ -5,16 +5,13 @@ import {
   ViewPlugin,
   WidgetType,
   DecorationSet,
-  Decoration,
-  PluginSpec,
+  Decoration
 } from '@codemirror/view';
-import { EditorSelection, Line, RangeSetBuilder } from '@codemirror/state';
+import { Line, RangeSetBuilder } from '@codemirror/state';
 import { MapSettingsEditorModal, NoteEditorModal } from 'modals';
-import { App, EditorRange, Plugin } from 'obsidian';
-import { notePattern, mapTagPattern, mapTagOpen, mapTagClose, errorPattern, removeTags, idTagRegex, parseNote, colour, cardStateColours, parseListItem, cardTagRegex, canStudy, noteRegex, listItemPattern, parseMapTag, formatContent, cardTagOpen, cardTagClose } from 'helpers';
-import { ListItem, MapSettings, Note, Warning } from 'types';
-import { Card, State } from 'ts-fsrs';
-import { createCards } from 'main';
+import { App, Plugin } from 'obsidian';
+import { notePattern, mapTagPattern, errorPattern, parseNote, colour, cardStateColours, canStudy, parseMapTag, formatContent, cardTagOpen, cardTagClose } from 'helpers';
+import { MapSettings, Note, Warning } from 'types';
 
 class MapTitleWidget extends WidgetType {
   app: App;
@@ -44,101 +41,45 @@ class MapTitleWidget extends WidgetType {
   }
 }
 
-class ControlPanelSpacer extends WidgetType {
-  constructor() {
-    super();
-  }
-
-  toDOM(view: EditorView): HTMLElement {
-    const span = document.createElement('span');
-    span.addClass('widget-control-panel-spacer');
-    return span;
-  }
+function createButton(textContent: string, id: string, clickHandler: () => void): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.textContent = textContent;
+  button.addClass('widget-map-button');
+  button.id = id;
+  button.onclick = clickHandler;
+  return button;
 }
 
-// Control panel buttons are separate b/c the button requires 2 clicks if within the parent
-class MapSettingsButton extends WidgetType {
+class MapMenuWidget extends WidgetType {
   app: App;
   map: MapSettings;
   match: RegExpExecArray;
-
-  constructor(app: App, match: RegExpExecArray) {
+  mindMapPos: number;
+  checkNotesCallback: () => void;
+  updateCardsCallback: () => void;
+  viewMindMapCallback: (mindMapPos: number) => void;
+  constructor(app: App, match: RegExpExecArray, mindMapPos: number, checkNotesCallback: () => void, updateCardsCallback: () => void, viewMindMapCallback: (mindMapPos: number) => void) {
     super();
     this.app = app;
     this.match = match;
     this.map = parseMapTag(match[1]);
+    this.mindMapPos = mindMapPos;
+    this.checkNotesCallback = checkNotesCallback;
+    this.updateCardsCallback = updateCardsCallback;
+    this.viewMindMapCallback = viewMindMapCallback;
   }
-
-  toDOM(view: EditorView): HTMLElement {
-    const settingsButton = document.createElement('button');
-    settingsButton.textContent = 'Settings';
-    settingsButton.addClass("widget-map-button");
-    settingsButton.id = 'widget-map-settings-button';
-    settingsButton.onclick = () => {
+  
+  toDOM(view: EditorView) {
+    const menu = document.createElement('div');
+    menu.addClass("widget-map-menu");
+    menu.append(createButton("Settings", "widget-map-settings-button", () => {
       // console.log("creating map settings editor modal");
       new MapSettingsEditorModal(this.app, view, this.match).open();
-    };
-    return settingsButton;
-  }
-}
-
-class CheckNotesButton extends WidgetType {
-  app: App;
-  checkNotesCallback: () => void;
-
-  constructor(app: App, checkNotesCallback: () => void) {
-    super();
-    this.app = app;
-    this.checkNotesCallback = checkNotesCallback;
-  }
-
-  toDOM(view: EditorView): HTMLElement {
-    const checkNotesButton = document.createElement('button');
-    checkNotesButton.textContent = 'Check Notes';
-    checkNotesButton.addClass("widget-map-button");
-    checkNotesButton.id = 'widget-map-check-notes-button';
-    checkNotesButton.onclick = this.checkNotesCallback;
-    return checkNotesButton;
-  }
-}
-
-class CreateCardsButton extends WidgetType {
-  app: App;
-  createCardsCallback: () => void;
-
-  constructor(app: App, createCardsCallback: () => void) {
-    super();
-    this.app = app;
-    this.createCardsCallback = createCardsCallback;
-  }
-
-  toDOM(view: EditorView): HTMLElement {
-    const createCardsButton = document.createElement('button');
-    createCardsButton.textContent = 'Create Cards';
-    createCardsButton.addClass("widget-map-button");
-    createCardsButton.id = 'widget-map-add-cards-button';
-    createCardsButton.onclick = this.createCardsCallback;
-    return createCardsButton;
-  }
-}
-
-class StudyButton extends WidgetType {
-  app: App;
-  studyCallback: () => void;
-
-  constructor(app: App, studyCallback: () => void) {
-    super();
-    this.app = app;
-    this.studyCallback = studyCallback;
-  }
-
-  toDOM(view: EditorView): HTMLElement {
-    const studyButton = document.createElement('button');
-    studyButton.textContent = 'Study Mind Map';
-    studyButton.addClass("widget-map-button");
-    studyButton.id = 'widget-map-study-button';
-    studyButton.onclick = this.studyCallback;
-    return studyButton;
+    }));
+    menu.append(createButton("Check Notes", "widget-map-check-notes-button", this.checkNotesCallback));
+    menu.append(createButton("Update Cards", "widget-map-update-cards-button", this.updateCardsCallback));
+    menu.append(createButton("View Mind Map", "widget-map-open-button", () => this.viewMindMapCallback(this.mindMapPos)));
+    return menu;
   }
 }
 
@@ -290,7 +231,7 @@ class ErrorWidget extends WidgetType {
   }
 }
 
-export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback: () => void, createCardsCallback: () => void, studyCallback: () => void) {
+export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback: () => void, createCardsCallback: () => void, studyCallback: (mindMapPos: number) => void) {
   return ViewPlugin.fromClass(
     class MindMapEditorViewPlugin implements PluginValue {
       decorations: DecorationSet;
@@ -349,19 +290,18 @@ export function createMindMapEditorViewPlugin(plugin: Plugin, checkNotesCallback
           while ((mapMatch = mapTagRegex.exec(text)) !== null) {
             const indices = (mapMatch as any).indices;
             indices[0] = [indices[0][0] + from, indices[0][1] + from];
+            const pos = view.state.doc.lineAt(indices[0][0]).number;
 
-            decorations.push({ start: indices[0][0], end: indices[0][1], 
-              deco: Decoration.replace({ widget: new MapTitleWidget(plugin.app, mapMatch) })});
-            decorations.push({ start: indices[0][1], end: indices[0][1], 
-              deco: Decoration.widget({ widget: new ControlPanelSpacer() })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], 
-              deco: Decoration.widget({ widget: new MapSettingsButton(plugin.app, mapMatch) })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], 
-              deco: Decoration.widget({ widget: new CheckNotesButton(plugin.app, checkNotesCallback) })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], 
-              deco: Decoration.widget({ widget: new CreateCardsButton(plugin.app, createCardsCallback) })})
-            decorations.push({ start: indices[0][1], end: indices[0][1], 
-              deco: Decoration.widget({ widget: new StudyButton(plugin.app, studyCallback) })})
+            decorations.push({ 
+              start: indices[0][0], 
+              end: indices[0][1], 
+              deco: Decoration.replace({ widget: new MapTitleWidget(plugin.app, mapMatch) })
+            });
+            decorations.push({
+              start: indices[0][1],
+              end: indices[0][1],
+              deco: Decoration.widget({ widget: new MapMenuWidget(plugin.app, mapMatch, pos, checkNotesCallback, createCardsCallback, studyCallback) })
+            });
           }
 
           let errorMatch;

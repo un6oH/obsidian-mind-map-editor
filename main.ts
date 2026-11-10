@@ -1,11 +1,10 @@
-import { App, Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
-import { createEmptyCard, FSRSParameters } from 'ts-fsrs';
+import { Editor, MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { createEmptyCard } from 'ts-fsrs';
 import { createMindMapEditorViewPlugin } from 'view-plugins/mind-map-editor-view-plugin';
 import { VIEW_TYPE_MIND_MAP, MindMapView } from 'views/mind-map-view';
 import { Settings, MindMapLayout, Warning, MapSettings, NoteGroup, MindMap, ListItem, Note } from 'types';
-import { mapTagRegex, generateCardString, toNoteID, parseListNumber, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, parseMapTag, generateMapString, errorRegex, errorTagRegex, removeTags, idTagRegex, noteRegex, parseNote, generateNoteString, parseListItem, noteTree, cardTagRegex, parseCard, listItemRegex, canStudy, parseMindMap } from 'helpers';
-import { MindMapCreatorModal, StudyMindMapModal, UpdateNotesModal } from 'modals';
-import { mindMapTrees, mindMapTreeUpdateEffect } from 'state-fields/mind-map-tree-state-field';
+import { mapTagRegex, parseListNumber, errorTagOpen, errorTagClose, mapTagOpen, mapTagClose, errorPattern, generateMapString, removeTags, noteRegex, parseNote, generateNoteString, parseListItem, listItemRegex, canStudy } from 'helpers';
+import { MindMapCreatorModal, StudyMindMapModal } from 'modals';
 
 const DEFAULT_SETTINGS = {
 	layouts: [], 
@@ -28,7 +27,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		});
 		
 		// 	const editor = activeView!.editor;35
-		this.registerEditorExtension([createMindMapEditorViewPlugin(this, () => this.checkNotes(), () => this.createCards(), () => this.openStudyMindMapModal())]);
+		this.registerEditorExtension([createMindMapEditorViewPlugin(this, () => this.checkNotes(), () => this.createCards(), (mindMapPos: number) => this.openStudyMindMapModal(null, mindMapPos))]);
 		// this.registerEditorExtension([mindMapTrees]);
 
 		this.registerView(
@@ -105,7 +104,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		return view.editor.cm as EditorView; 
 	}
 
-	getMindMap(view: MarkdownView | null = null): MindMap | null {
+	getMindMap(view: MarkdownView | null = null, mindMapPos: number): MindMap | null {
 		if (!view) {
 			view = this.getActiveView();
 			if (!view) {
@@ -113,6 +112,8 @@ export default class MindMapEditorPlugin extends Plugin {
 				return null;
 			}
 		}
+
+		
 
 		return null;
 	}
@@ -150,7 +151,7 @@ export default class MindMapEditorPlugin extends Plugin {
 		createCards(view.editor);
 	}
 
-	openStudyMindMapModal(view: MarkdownView | null = null) {
+	openStudyMindMapModal(view: MarkdownView | null = null, mindMapPos: number) {
 		if (!view) {
 			view = this.getActiveView();
 			if (!view || !view.editor) {
@@ -165,13 +166,13 @@ export default class MindMapEditorPlugin extends Plugin {
 			return;
 		}
 
-		const mindMap = this.getMindMap(view);
+		const mindMap = this.getMindMap(view, mindMapPos);
 		if (!mindMap) {
 			console.log("openStudyMindMapModal(): Error on get mind map");
 			return;
 		}
 
-		console.log(mindMap);
+		// console.log(mindMap);
 		new StudyMindMapModal(this, view.editor, mindMap).open();
 	}
 }
@@ -230,7 +231,6 @@ interface NoteList {
 }
 
 function processDocument(doc: Editor): NoteList {
-	
 	// note library properties
 	// ensure every valid note is pushed
 	const listNumbers: number[] = [];

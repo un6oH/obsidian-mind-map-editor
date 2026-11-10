@@ -15,16 +15,20 @@ If your plugin does not need CSS, delete this file.
 }
 
 .widget-map-title {
-  display: inline-block;
+  display: block;
 }
 
 .widget-map-title h1 {
   margin: 0 0.5em 0.5ex 0;
 }
 
-.widget-control-panel-spacer {
+.widget-menu-spacer {
   display: block;
   height: 0;
+}
+
+.widget-map-menu {
+  display: inline;
 }
 
 .widget-map-button {

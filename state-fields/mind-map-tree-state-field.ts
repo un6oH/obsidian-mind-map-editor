@@ -1,10 +1,9 @@
-import { syntaxTree } from '@codemirror/language';
 import {
   StateEffect,
   StateField,
   Transaction,
 } from '@codemirror/state';
-import { listItemPattern, listItemRegex, mapTagPattern } from 'helpers';
+import { listItemRegex, mapTagPattern } from 'helpers';
 
 export interface MindMapTree {
   root: number; // line number of map tag
